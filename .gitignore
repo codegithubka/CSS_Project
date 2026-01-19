@@ -1,2 +1,12 @@
 __pycache__/
 results/
+# Virtual environment
+.venv/
+__pycache__/
+# Python bytecode
+*.pyc
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+# Data files
+data/
+.vscode/
