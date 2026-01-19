@@ -1,0 +1,1 @@
+from .mean_field import MeanFieldModel
