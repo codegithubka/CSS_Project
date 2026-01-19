@@ -55,8 +55,8 @@ class MeanFieldModel:
         """
         R, C = Z
         
-        R = max(R, 0)
-        C = max(C,0)
+        R = np.maximum(R, 0)
+        C = np.maximum(C,0)
         
         # Net prey growth rate
         r = self.birth - prey_death
@@ -70,7 +70,7 @@ class MeanFieldModel:
         return [dR, dC]
         
     
-    def solve(self, prey_death: float = 0.5, R0: float = 0.5, Z0: float = 0.2, t_max: float = 500, n_points: int = 1000)->Tuple[np.ndarray, np.ndarray]:
+    def solve(self, prey_death: float = 0.5, R0: float = 0.5, C0: float = 0.2, t_max: float = 500, n_points: int = 1000)->Tuple[np.ndarray, np.ndarray]:
         """
         Solve the mean-field ODE system.
 
@@ -84,7 +84,7 @@ class MeanFieldModel:
             Tuple[np.ndarray, np.ndarray]: Time points and solution array
         """
         t = np.linspace(0, t_max, n_points)
-        Z0 = [R0, Z0]
+        Z0 = [R0, C0]
         
         sol = odeint(self.ode_system, Z0, t, args=(prey_death,))
         

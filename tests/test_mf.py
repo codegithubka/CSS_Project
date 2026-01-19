@@ -31,7 +31,6 @@ def test_monotonicity(model):
     sweep = model.sweep_death_rate(d_r_range)
     assert np.all(np.diff(sweep['R_eq']) <= 0)
     
-    
 def test_convergence(model):
     ana_R, _ = model.equilibrium(0.05)
     num_R, _ = model.equilibrium_numerical(0.05)
