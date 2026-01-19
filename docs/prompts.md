@@ -28,3 +28,5 @@ Finally, make sure to add an expected type for each argument and define the retu
 6. Create a time series analysis plot of the evolution of prey and predator density vs. time. Make sure enough time steps all visible to see how the system eventually stabilizes.
 
 7. Create a bifuracation diagram to confirm the monotonic relationship for a varying prey death rate vs. equilibrium density. 
+
+###
