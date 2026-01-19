@@ -176,4 +176,8 @@ if __name__== '__main__':
     print(f'Conversion efficiency: {mf.conversion}')
     print(f'Prey competition: {mf.prey_competition}')
     print(f'Predator competition: {mf.predator_competition}')
+    
+    d_r_values = np.linspace(0.01, 0.15, 50)
+    results = mf.sweep_death_rate(d_r_values)
+    
         
