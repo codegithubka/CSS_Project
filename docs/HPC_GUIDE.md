@@ -15,6 +15,10 @@ python3 -m venv ~/css_env
 source ~/css_env/bin/activate
 pip install numpy scipy matplotlib joblib
 
+# To do a dry run for testing the entire environment
+
+python3 pp_analysis.py --mode full --dry-run
+
 # To submit a job
 
 sbatch run_analysis.sh

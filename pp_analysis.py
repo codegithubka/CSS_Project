@@ -107,6 +107,8 @@ class Config:
 
     # Parallel settings
     n_jobs: int = -1  # -1 = all available cores
+    
+    synchronous: bool = True  # Use synchronous/async updates
 
     def get_prey_births(self) -> np.ndarray:
         return np.linspace(self.prey_birth_min, self.prey_birth_max, self.n_prey_birth)
@@ -254,6 +256,7 @@ def run_single_simulation(
         neighborhood="moore",
         params=params,
         seed=seed,
+        syncrhonous = cfg.synchronous # Use synchronous/async updates
     )
 
     if with_evolution:
@@ -832,10 +835,19 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", help="Print estimated runtime and exit"
     )
+    
+    parser.add_argument(
+        "--async", 
+        action="store_false", 
+        dest="synchronous", 
+        help="Run simulation in asynchronous (random-sequential) mode"
+    )
+    
     args = parser.parse_args()
 
     # Setup
     cfg = Config()
+    cfg.synchronous = args.synchronous
     cfg.n_jobs = (
         args.cores if args.cores > 0 else int(os.environ.get("SLURM_CPUS_PER_TASK", -1))
     )
