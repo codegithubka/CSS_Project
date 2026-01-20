@@ -196,8 +196,110 @@ class PP(CA):
 		self.synchronous: bool = bool(synchronous)
 
 	def update_sync(self) -> None:
-		"""Synchronous update (not implemented)."""
-		raise NotImplementedError("Synchronous PP update not implemented")
+		"""Synchronous (vectorized) update.
+
+		Implements a vectorized equivalent of the random-sequential
+		asynchronous update. Each occupied cell (prey or predator) gets at
+		most one reproduction attempt: with probability `birth` it chooses a
+		random neighbor and, if that neighbor in the reference grid has the
+		required target state (empty for prey, prey for predator), it
+		becomes a candidate attempt. When multiple reproducers target the
+		same cell, one attempt is chosen uniformly at random to succeed.
+		Deaths are applied the same vectorized way as in the async update.
+		"""
+
+		rows, cols = self.grid.shape
+		grid_ref = self.grid.copy()
+
+		# Precompute neighbor shifts and arrays for indexing
+		if self.neighborhood == "neumann":
+			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+		else:
+			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+		dr_arr = np.array([s[0] for s in shifts], dtype=int)
+		dc_arr = np.array([s[1] for s in shifts], dtype=int)
+		n_shifts = len(shifts)
+
+		def _process_reproduction(sources, birth_prob, target_state_required, new_state_val):
+			"""Handle reproduction attempts from `sources`.
+
+			sources: (M,2) array of (r,c) positions in grid_ref
+			birth_prob: scalar probability that a source attempts reproduction
+			target_state_required: state value required in grid_ref at target
+			new_state_val: state to write into self.grid for successful targets
+			"""
+			if sources.size == 0:
+				return
+
+			M = sources.shape[0]
+			# Which sources attempt reproduction
+			attempt_mask = self.generator.random(M) < float(birth_prob)
+			if not np.any(attempt_mask):
+				return
+
+			src = sources[attempt_mask]
+			K = src.shape[0]
+
+			# Each attempting source picks one neighbor uniformly
+			nbr_idx = self.generator.integers(0, n_shifts, size=K)
+			nr = (src[:, 0] + dr_arr[nbr_idx]) % rows
+		
+			nc = (src[:, 1] + dc_arr[nbr_idx]) % cols
+
+			# Only keep attempts where the reference grid at the target has the required state
+			valid_mask = (grid_ref[nr, nc] == target_state_required)
+			if not np.any(valid_mask):
+				return
+
+			nr = nr[valid_mask]
+			nc = nc[valid_mask]
+
+			# Flatten target indices to group collisions
+			target_flat = (nr * cols + nc).astype(np.int64)
+			# Sort targets to find groups that target the same cell
+			order = np.argsort(target_flat)
+			tf_sorted = target_flat[order]
+
+			# unique targets (on the sorted array) with start indices and counts
+			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
+			if uniq_targets.size == 0:
+				return
+
+			# For each unique target, pick one attempt uniformly at random
+			# idx_start gives indices into the sorted array
+			chosen_sorted_positions = []
+			for start, cnt in zip(idx_start, counts):
+				off = int(self.generator.integers(0, cnt))
+				chosen_sorted_positions.append(start + off)
+			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
+
+			# Map back to indices in the filtered attempts array
+			chosen_indices = order[chosen_sorted_positions]
+
+			chosen_target_flats = target_flat[chosen_indices]
+			chosen_rs = (chosen_target_flats // cols).astype(int)
+			chosen_cs = (chosen_target_flats % cols).astype(int)
+
+			# Apply successful births to the main grid
+			self.grid[chosen_rs, chosen_cs] = new_state_val
+
+		# Prey reproduce into empty cells (target state 0 -> new state 1)
+		prey_sources = np.argwhere(grid_ref == 1)
+		_process_reproduction(prey_sources, self.params["prey_birth"], 0, 1)
+
+		# Predators reproduce into prey cells (target state 1 -> new state 2)
+		pred_sources = np.argwhere(grid_ref == 2)
+		_process_reproduction(pred_sources, self.params["predator_birth"], 1, 2)
+
+		# Vectorized synchronous deaths (same as async implementation)
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"])) & (self.grid == 1)
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"])) & (self.grid == 2)
+
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
 
 	def update_async(self) -> None:
 		"""Asynchronous (random-sequential) update.
