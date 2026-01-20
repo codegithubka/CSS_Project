@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=pp_evo
-#SBATCH --partition=thin
+#SBATCH --partition=rome
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -41,10 +41,8 @@ echo "========================================"
 # -----------------------------------------------------------------------------
 
 # Load modules (adjust to your Snellius setup)
-module purge
-module load 2023
-module load Python/3.11.3-GCCcore-12.3.0
-module load SciPy-bundle/2023.07-gfbf-2023a
+# Load modules (adjust to your Snellius setup)
+source ~/snellius_venv/bin/activate
 
 # If you have a virtual environment with your models package:
 # source ~/venvs/ca_analysis/bin/activate

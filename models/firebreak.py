@@ -29,20 +29,36 @@ class Firebreak(PP):
     PP CA where prey commit suicide when threatend to creaty empty firebreaks
     that starve predators
     """
-    
-    def __init__(self, rows, cols, densities, neighborhood = "moore",
-                 params = None, cell_params = None, seed = None, synchronous = True):
+
+    def __init__(
+        self,
+        rows,
+        cols,
+        densities,
+        neighborhood="moore",
+        params=None,
+        cell_params=None,
+        seed=None,
+        synchronous=True,
+    ):
         # get firebreak specific parameter
-        self.alt_dr = 0.5 #FIXME: Random default value
+        self.alt_dr = 0.5  # FIXME: Random default value
         clean_params = dict(params) if params else {}
         if "altruistic_dr" in clean_params:
             self.alt_dr = float(clean_params.pop("altruistic_dr"))
-            
-        super().__init__(rows, cols, densities, neighborhood, clean_params, cell_params, seed, synchronous)
-        self.params['altruistic_dr'] = self.alt_dr
-        
+
+        super().__init__(
+            rows,
+            cols,
+            densities,
+            neighborhood,
+            clean_params,
+            cell_params,
+            seed,
+            synchronous,
+        )
+        self.params["altruistic_dr"] = self.alt_dr
+
     def update_sync(self) -> None:
         """Override syncrhonous update. Similar to PP update except Prey Death Logic."""
         pass
-        
-        

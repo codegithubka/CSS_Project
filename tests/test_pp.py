@@ -14,6 +14,7 @@ except ImportError:
 
 # --- FIXTURES ---
 
+
 @pytest.fixture
 def base_params():
     """Standard robust parameters for testing."""
@@ -24,18 +25,21 @@ def base_params():
         "predator_birth": 0.2,
     }
 
+
 @pytest.fixture
 def seed():
     """Fixed seed for reproducibility."""
     return 42
 
+
 # --- TESTS ---
+
 
 def test_initialization(base_params, seed):
     """Test grid setup, shapes, and density distribution."""
     rows, cols = 50, 50
     densities = (0.2, 0.1)  # 20% prey, 10% predator
-    
+
     pp = PP(rows, cols, densities, params=base_params, seed=seed)
 
     # Check grid dimensions
@@ -51,6 +55,7 @@ def test_initialization(base_params, seed):
     assert abs(prey_count - total_cells * 0.2) < tolerance
     assert abs(pred_count - total_cells * 0.1) < tolerance
 
+
 def test_async_update_changes_grid(base_params, seed):
     """Test if Asynchronous update actually modifies the grid."""
     pp = PP(20, 20, (0.5, 0.2), synchronous=False, params=base_params, seed=seed)
@@ -59,7 +64,10 @@ def test_async_update_changes_grid(base_params, seed):
     pp.update()
 
     # In a generic CA step with these densities, the grid MUST change
-    assert not np.array_equal(pp.grid, initial_grid), "Grid did not change after Async update"
+    assert not np.array_equal(
+        pp.grid, initial_grid
+    ), "Grid did not change after Async update"
+
 
 def test_sync_update_changes_grid(base_params, seed):
     """Test if Synchronous update actually modifies the grid."""
@@ -68,14 +76,17 @@ def test_sync_update_changes_grid(base_params, seed):
 
     pp.update()
 
-    assert not np.array_equal(pp.grid, initial_grid), "Grid did not change after Sync update"
+    assert not np.array_equal(
+        pp.grid, initial_grid
+    ), "Grid did not change after Sync update"
+
 
 def test_prey_growth_in_isolation(seed):
     """Prey should grow if there are no predators and high birth rate."""
     growth_params = {
         "prey_death": 0.0,
         "predator_death": 1.0,  # Kill any accidental predators
-        "prey_birth": 1.0,      # Max birth rate
+        "prey_birth": 1.0,  # Max birth rate
         "predator_birth": 0.0,
     }
     # Start with only prey (10%)
@@ -86,6 +97,7 @@ def test_prey_growth_in_isolation(seed):
     end_count = np.sum(pp.grid == 1)
 
     assert end_count > start_count, "Prey did not grow in isolation"
+
 
 def test_predator_starvation(seed):
     """Predators should die if there is no prey."""
@@ -104,6 +116,7 @@ def test_predator_starvation(seed):
 
     assert end_count < start_count, "Predators did not die from starvation"
 
+
 def test_parameter_evolution(base_params, seed):
     """Test if per-cell parameters initialize and mutate correctly."""
     pp = PP(30, 30, (0.3, 0.1), params=base_params, seed=seed)
@@ -113,10 +126,10 @@ def test_parameter_evolution(base_params, seed):
 
     # Check key existence
     assert "prey_death" in pp.cell_params
-    
+
     # Check initialization logic
     param_grid = pp.cell_params["prey_death"]
-    prey_mask = (pp.grid == 1)
+    prey_mask = pp.grid == 1
 
     # Values should exist where prey exists
     assert np.all(~np.isnan(param_grid[prey_mask]))
@@ -133,7 +146,10 @@ def test_parameter_evolution(base_params, seed):
 
     # If mutation is working, we expect the values to diverge from the initial scalar
     if len(valid_vals) > 5:
-        assert np.std(valid_vals) > 0.0, "Parameters did not mutate/drift (variance is 0)"
+        assert (
+            np.std(valid_vals) > 0.0
+        ), "Parameters did not mutate/drift (variance is 0)"
+
 
 def test_stability_long_run(base_params, seed):
     """Run for 100 steps to ensure no immediate crash/extinction with default params."""
@@ -144,13 +160,16 @@ def test_stability_long_run(base_params, seed):
         pp.update()
         n_prey = np.sum(pp.grid == 1)
         n_pred = np.sum(pp.grid == 2)
-        
+
         # We consider 'extinct' if either species drops to 0
         if n_prey == 0 or n_pred == 0:
             extinct = True
             break
 
-    assert not extinct, "Populations went extinct within 100 steps with default parameters"
+    assert (
+        not extinct
+    ), "Populations went extinct within 100 steps with default parameters"
+
 
 def test_viz_smoke_test():
     """Ensure visualize() can be called without error (requires matplotlib)."""
@@ -163,6 +182,6 @@ def test_viz_smoke_test():
         pp = PP(10, 10, (0.2, 0.1))
         # Just initialize visualization, don't keep window open
         pp.visualize(interval=1, pause=0.001)
-        plt.close('all')  # Cleanup figures
+        plt.close("all")  # Cleanup figures
     except Exception as e:
         pytest.fail(f"visualize() raised an exception: {e}")
