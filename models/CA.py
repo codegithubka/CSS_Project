@@ -592,11 +592,11 @@ class PP(CA):
 
 		# Prey reproduce into empty cells (target state 0 -> new state 1)
 		prey_sources = np.argwhere(grid_ref == 1)
-		_process_reproduction(prey_sources, self.params["prey_birth"], 0, 1)
+		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
 
 		# Predators reproduce into prey cells (target state 1 -> new state 2)
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_reproduction(pred_sources, self.params["predator_birth"], 1, 2)
+		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
 		"""Asynchronous (random-sequential) update.
