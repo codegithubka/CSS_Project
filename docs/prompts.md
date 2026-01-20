@@ -1,4 +1,4 @@
-## Create base CA class
+## Base CA class
 For the start of this project, we need a strong baseline. This prompt creates a basic cellular automaton class with general logic. This can then be filled in by overriding the update function and adding visualizations.
 
 ### prompt
@@ -156,7 +156,7 @@ class CA:
 ### changes
 Removed a few unnecessary lines.
 
-## Add predator-prey model and asynchronous updating
+## Predator-prey model and asynchronous updating
 Now the basic predator-prey update rules need to be defined. This is done by creating a predator-prey class inheriting the CA class and overriding the update function. We will create the possibility for either synchronous and asynchronous updating. We will start with only implementing the asynchronous rules here, as those are easier to implement. Later, we can implement the faster synchronous updating based on the asynchronous rules.
 
 ### prompt
@@ -298,8 +298,9 @@ class PP(CA):
 			self.update_async()
 
 ### changes
+Changed default behavior to synchronous updating after it was implemented. Added default behavior for all arguments.
 
-## Add synchronous updating
+## Synchronous updating
 Now we add the asyncrhonous updating, making sure the functionality is the vectorized equivalent of the asynchronous function.
 
 ### prompt
@@ -415,7 +416,7 @@ Implement the synchronous updating for the PP class as a vectorized (optimized) 
 ### changes
 Swapped the order of birth and death checks. This results in the same behavior, but removes the need to check whether the post-birth grid matches the reference grid.
 
-## Add basic visualisations
+## Basic visualisations
 Basic tests pass and the grid updates seem plausible, but to see it in better detail we need to add visualisation. A first step in this is an imshow plot which updates every N iterations.
 
 ### prompt
@@ -526,6 +527,16 @@ For both classes, ensure that the matplotlib library is not needed to run the si
 		plt.pause(self._viz_pause)
 
 ### changes
+
+## Evolution of parameters
+Now we need to add functionality allowing parameters to evolve. Specifically, we are interested in the prey death rates. To do this we track another grid with values for the death rate of each prey on the grid. When a prey reproduces, we add Gaussian noise to the death rate inherited from the parent.
+
+### prompt
+In the PP class, create functionality for evolving / mutating parameters. Create a new function called evolve which takes a str which will be the parameter to evolve. This should correspond to any of the known parameters. Then, create an array in cell_params, filling the cells occupied by the relevant species (prey for "prey_death", predator for "predator_birth", etc.) with the global parameter in params. The other cells (either empty or occupied by the other species) should be either zero or NaN. Additionally, the function should take a standard deviation, minimum, and maximum for the parameter. These values should have defaults: 0.05, 0.01, and 0.99.
+
+In the asynchronous and synchronous update functions, make the following changes. When the relevant species reproduces, the newly born predator or prey inherits the parameter value from their parent, with Gaussian noise of the standard deviation defined in the evolve function. Clip the parameter between the minimum and maximum. Place this new value into its cell_params grid. When a predator or prey dies, or when a prey gets eaten, remove their parameter values from the cell_params grid, such that the only non-zero (or non-NaN) elements in the cell_params grid correspond to a cell occupied by the relevant species.
+
+Ensure that if the cell_params grids are set (by the evolve function), the cell-specific parameters are used in the updates. For instance, the deaths of the prey should be calculated based on the values in the cell_params grid, not the global params value. Since the cell_params grid's only non-zero (or non-NaN) entries are active cells of the relevant species, there is no need to get the occupied prey / predator cells from PP.grid.
 
 
 ### Mean Field class

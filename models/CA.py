@@ -134,6 +134,28 @@ class CA:
 		Returns: None
 		"""
 		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
+
+		# One-time validation for per-cell evolved parameters (if present).
+		# For performance, PP.update_* assumes that any per-cell parameter
+		# arrays in `self.cell_params` have already been validated to:
+		# - be numpy arrays of the same shape as `self.grid`, and
+		# - have non-NaN entries exactly at the positions occupied by the
+		#   corresponding species (e.g. `prey_death` non-NaNs at prey cells).
+		# If this object defines `_evolve_info`, perform those checks once
+		# before the run loop so updates can be fast.
+		if hasattr(self, "_evolve_info") and isinstance(self._evolve_info, dict):
+			for pname in self._evolve_info.keys():
+				cp_arr = self.cell_params.get(pname)
+				if isinstance(cp_arr, np.ndarray):
+					if cp_arr.shape != self.grid.shape:
+						raise ValueError(f"cell_params['{pname}'] must have shape equal to grid")
+					# expected non-NaN positions correspond to species in grid
+					species = 1 if pname.startswith("prey_") else 2
+					nonnan = ~np.isnan(cp_arr)
+					expected = (self.grid == species)
+					if not np.array_equal(nonnan, expected):
+						raise ValueError(f"cell_params['{pname}'] non-NaN entries must match positions of species {species} in the grid")
+
 		for i in range(steps):
 			self.update()
 			# Update visualization if enabled every `interval` iterations
@@ -151,6 +173,7 @@ class CA:
 		figsize: Tuple[float, float] = (5, 5),
 		pause: float = 0.001,
 		cmap=None,
+		show_cell_params: bool = False,
 	) -> None:
 		"""Enable interactive visualization of the grid.
 
@@ -188,9 +211,47 @@ class CA:
 			cmap_obj = c_spec
 
 		plt.ion()
-		fig, ax = plt.subplots(figsize=figsize)
-		im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
-		ax.set_title("Iteration 0")
+		# Determine whether to show any per-cell parameter arrays
+		param_arrays = []
+		param_keys = []
+		if show_cell_params and isinstance(self.cell_params, dict):
+			for k, v in self.cell_params.items():
+				if isinstance(v, np.ndarray) and v.shape == self.grid.shape:
+					param_arrays.append(v)
+					param_keys.append(k)
+
+		n_extra = len(param_arrays)
+		if n_extra == 0:
+			fig, ax = plt.subplots(figsize=figsize)
+			im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+			ax.set_title("States: Iteration 0")
+			axes = [ax]
+			ims = [im]
+		else:
+			# create side-by-side plots: states + one per-param
+			fig, axes = plt.subplots(1, 1 + n_extra, figsize=(figsize[0] * (1 + n_extra), figsize[1]))
+			# normalize axes to a list for consistent indexing
+			if not isinstance(axes, (list, tuple, np.ndarray)):
+				axes = [axes]
+			else:
+				try:
+					axes = list(np.array(axes).flatten())
+				except Exception:
+					axes = list(axes)
+			# first axis: states
+			im0 = axes[0].imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+			axes[0].set_title("States: Iteration 0")
+			ims = [im0]
+			# other axes: parameter arrays
+			for i, arr in enumerate(param_arrays, start=1):
+				axp = axes[i]
+				# use a continuous cmap for parameter values
+				vmin = float(np.nanmin(arr)) if np.isfinite(np.nanmin(arr)) else 0.0
+				vmax = float(np.nanmax(arr)) if np.isfinite(np.nanmax(arr)) else 1.0
+				imp = axp.imshow(arr, cmap=plt.get_cmap("viridis"), interpolation="nearest", vmin=vmin, vmax=vmax)
+				axp.set_title(f"{param_keys[i-1]}: Iteration 0")
+				ims.append(imp)
+
 		plt.show(block=False)
 		fig.canvas.draw()
 		plt.pause(pause)
@@ -199,8 +260,9 @@ class CA:
 		self._viz_on = True
 		self._viz_interval = interval
 		self._viz_fig = fig
-		self._viz_ax = ax
-		self._viz_im = im
+		self._viz_axes = axes
+		self._viz_ims = ims
+		self._viz_param_keys = param_keys
 		self._viz_cmap = cmap_obj
 		self._viz_pause = float(pause)
 
@@ -218,8 +280,28 @@ class CA:
 		# Lazy import for pause; matplotlib already imported in visualize
 		import matplotlib.pyplot as plt
 
-		self._viz_im.set_data(self.grid)
-		self._viz_ax.set_title(f"Iteration {iteration}")
+		# update states grid
+		if hasattr(self, "_viz_ims") and len(self._viz_ims) > 0:
+			# first image is states
+			self._viz_ims[0].set_data(self.grid)
+			self._viz_axes[0].set_title(f"States: Iteration {iteration}")
+			# update param images if any
+			for i in range(1, len(self._viz_ims)):
+				key = self._viz_param_keys[i-1]
+				arr = self.cell_params.get(key)
+				if arr is None:
+					# blank out with NaNs
+					arr = np.full(self.grid.shape, np.nan)
+				self._viz_ims[i].set_data(arr)
+				# adjust color scaling if possible
+				try:
+					vmin = float(np.nanmin(arr))
+					vmax = float(np.nanmax(arr))
+					if vmin < vmax:
+						self._viz_ims[i].set_clim(vmin=vmin, vmax=vmax)
+				except Exception:
+					pass
+
 		# draw/update
 		self._viz_fig.canvas.draw_idle()
 		plt.pause(self._viz_pause)
@@ -238,7 +320,7 @@ class PP(CA):
 
 	The constructor validates parameters are in [0,1] and raises if
 	other user-supplied params are present. The `synchronous` flag
-	chooses the update mode (default False -> asynchronous updates).
+	chooses the update mode (default True -> synchronous updates).
 	"""
 
 	# Default colors: 0=empty black, 1=prey green, 2=predator red
@@ -246,14 +328,14 @@ class PP(CA):
 
 	def __init__(
 		self,
-		rows: int,
-		cols: int,
-		densities: Tuple[float, ...],
-		neighborhood: str,
-		params: Dict[str, object],
-		cell_params: Dict[str, object],
+		rows: int = 10,
+		cols: int = 10,
+		densities: Tuple[float, ...] = (0.2, 0.1),
+		neighborhood: str = "moore",
+		params: Dict[str, object] = None,
+		cell_params: Dict[str, object] = None,
 		seed: Optional[int] = None,
-		synchronous: bool = False,
+		synchronous: bool = True,
 	) -> None:
 		# Allowed params and defaults
 		_defaults = {
@@ -288,6 +370,45 @@ class PP(CA):
 
 		self.synchronous: bool = bool(synchronous)
 
+		# Information about which parameters are being evolved and their mutation specs
+		# Maps parameter name -> dict with keys: 'sd', 'min', 'max'
+		self._evolve_info: Dict[str, Dict[str, float]] = {}
+
+
+	def evolve(self, param: str, sd: float = 0.05, min: float = 0.01, max: float = 0.99) -> None:
+		"""Enable per-cell evolution for a given parameter.
+
+		Creates a per-cell array in `self.cell_params[param]` with the same
+		shape as the grid. Cells currently occupied by the relevant species are
+		initialized to the global value in `self.params[param]`; other cells are
+		set to NaN. Mutation metadata (sd, min, max) are stored in
+		`self._evolve_info[param]`.
+
+		Args:
+		- param: one of the keys in `self.params` (e.g. 'prey_death')
+		- sd: standard deviation for Gaussian mutations
+		- min: minimum clipped value after mutation
+		- max: maximum clipped value after mutation
+		"""
+		if param not in self.params:
+			raise ValueError(f"Unknown parameter '{param}'")
+
+		# determine target species for this parameter
+		if param.startswith("prey_"):
+			species = 1
+		elif param.startswith("predator_"):
+			species = 2
+		else:
+			raise ValueError("Parameter must start with 'prey_' or 'predator_' to evolve")
+
+		# create per-cell float array with NaNs for non-relevant cells
+		arr = np.full(self.grid.shape, np.nan, dtype=float)
+		mask = (self.grid == species)
+		arr[mask] = float(self.params[param])
+		self.cell_params[param] = arr
+		self._evolve_info[param] = {"sd": float(sd), "min": float(min), "max": float(max)}
+
+
 	def update_sync(self) -> None:
 		"""Synchronous (vectorized) update.
 
@@ -301,6 +422,10 @@ class PP(CA):
 		Deaths are applied the same vectorized way as in the async update.
 		"""
 
+		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
+		# well-formed and correspond to the current grid. `run()` performs a
+		# one-time validation before the update loop; update methods do not
+		# re-check for performance reasons.
 		rows, cols = self.grid.shape
 		grid_ref = self.grid.copy()
 
@@ -310,14 +435,35 @@ class PP(CA):
 		rand_prey = self.generator.random(self.grid.shape)
 		rand_pred = self.generator.random(self.grid.shape)
 
-		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
-		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+		# Use per-cell arrays directly if present, otherwise fall back to global scalar
+		cp_prey = self.cell_params.get("prey_death")
+		if isinstance(cp_prey, np.ndarray):
+			prey_death_mask = (rand_prey < cp_prey)
+		else:
+			prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+
+		cp_pred = self.cell_params.get("predator_death")
+		if isinstance(cp_pred, np.ndarray):
+			pred_death_mask = (rand_pred < cp_pred)
+		else:
+			pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
 
 		# Apply deaths to the current grid. We deliberately do this before
 		# reproduction but keep using `grid_ref` for all reproduction checks
 		# below to preserve the original (birth-before-death) semantics.
 		self.grid[prey_death_mask] = 0
 		self.grid[pred_death_mask] = 0
+
+		# Clear per-cell parameters for individuals that died
+		for pname in list(self._evolve_info.keys()):
+			if pname.startswith("prey_"):
+				arr = self.cell_params.get(pname)
+				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+					arr[prey_death_mask] = np.nan
+			elif pname.startswith("predator_"):
+				arr = self.cell_params.get(pname)
+				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+					arr[pred_death_mask] = np.nan
 
 		# Precompute neighbor shifts and arrays for indexing (used by reproduction)
 		if self.neighborhood == "neumann":
@@ -328,7 +474,7 @@ class PP(CA):
 		dc_arr = np.array([s[1] for s in shifts], dtype=int)
 		n_shifts = len(shifts)
 
-		def _process_reproduction(sources, birth_prob, target_state_required, new_state_val):
+		def _process_reproduction(sources, birth_param_key, birth_prob, target_state_required, new_state_val):
 			"""Handle reproduction attempts from `sources`.
 
 			sources: (M,2) array of (r,c) positions in grid_ref
@@ -340,8 +486,18 @@ class PP(CA):
 				return
 
 			M = sources.shape[0]
+			# Determine per-source birth probabilities (from cell_params if present)
+			parent_grid = None
+			if isinstance(birth_param_key, str) and birth_param_key in self.cell_params:
+				parent_grid = self.cell_params.get(birth_param_key)
+			if isinstance(parent_grid, np.ndarray):
+				# parent_grid was already validated above to match species positions
+				parent_probs = parent_grid[sources[:, 0], sources[:, 1]]
+			else:
+				parent_probs = np.full(M, float(birth_prob))
+
 			# Which sources attempt reproduction
-			attempt_mask = self.generator.random(M) < float(birth_prob)
+			attempt_mask = self.generator.random(M) < parent_probs
 			if not np.any(attempt_mask):
 				return
 
@@ -358,6 +514,8 @@ class PP(CA):
 			if not np.any(valid_mask):
 				return
 
+			src_valid = src[valid_mask]
+		
 			nr = nr[valid_mask]
 			nc = nc[valid_mask]
 
@@ -387,8 +545,50 @@ class PP(CA):
 			chosen_rs = (chosen_target_flats // cols).astype(int)
 			chosen_cs = (chosen_target_flats % cols).astype(int)
 
+			# Determine parent positions corresponding to chosen attempts
+			parents = src_valid[chosen_indices]
+
 			# Apply successful births to the main grid
 			self.grid[chosen_rs, chosen_cs] = new_state_val
+
+			# For any evolved parameters, inherit from parent with Gaussian noise
+			for pname, meta in self._evolve_info.items():
+				# check which species this parameter belongs to
+				if pname.startswith("prey_"):
+					target_species = 1
+				elif pname.startswith("predator_"):
+					target_species = 2
+				else:
+					continue
+				# only assign if the new_state matches target_species
+				if new_state_val != target_species:
+					# ensure that parameters for other species are cleared at these cells
+					arr = self.cell_params.get(pname)
+					if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+						arr[chosen_rs, chosen_cs] = np.nan
+					continue
+
+				# get parent values (fallback to global param if parent value missing)
+				arr = self.cell_params.get(pname)
+				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+					parent_vals = arr[parents[:, 0], parents[:, 1]]
+					# where parent_vals is NaN, fall back to global
+					mask_nan = np.isnan(parent_vals)
+					if np.any(mask_nan):
+						parent_vals[mask_nan] = float(self.params.get(pname, 0.0))
+				else:
+					parent_vals = np.full(parents.shape[0], float(self.params.get(pname, 0.0)))
+
+				# mutate and clip
+				sd = float(meta["sd"])
+				mn = float(meta["min"])
+				mx = float(meta["max"])
+				mut = parent_vals + self.generator.normal(0.0, sd, size=parent_vals.shape)
+				mut = np.clip(mut, mn, mx)
+				# ensure array exists in cell_params
+				if pname not in self.cell_params or not isinstance(self.cell_params[pname], np.ndarray):
+					self.cell_params[pname] = np.full(self.grid.shape, np.nan)
+				self.cell_params[pname][chosen_rs, chosen_cs] = mut
 
 		# Prey reproduce into empty cells (target state 0 -> new state 1)
 		prey_sources = np.argwhere(grid_ref == 1)
@@ -415,16 +615,42 @@ class PP(CA):
 		rows, cols = self.grid.shape
 		grid_ref = self.grid.copy()
 
+		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
+		# well-formed and correspond to the current grid. `run()` performs a
+		# one-time validation before the update loop; update methods do not
+		# re-check for performance reasons.
+
 		# Sample and apply deaths first (based on the reference grid). Deaths
 		# are sampled from `grid_ref` so statistics remain identical.
 		rand_prey = self.generator.random(self.grid.shape)
 		rand_pred = self.generator.random(self.grid.shape)
 
-		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
-		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+		# Determine death masks: use per-cell arrays when present, otherwise global scalars
+		cp_pre = self.cell_params.get("prey_death")
+		if isinstance(cp_pre, np.ndarray):
+			prey_death_mask = (rand_prey < cp_pre)
+		else:
+			prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+
+		cp_pred = self.cell_params.get("predator_death")
+		if isinstance(cp_pred, np.ndarray):
+			pred_death_mask = (rand_pred < cp_pred)
+		else:
+			pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
 
 		self.grid[prey_death_mask] = 0
 		self.grid[pred_death_mask] = 0
+
+		# clear per-cell params for dead individuals
+		for pname in list(self._evolve_info.keys()):
+			if pname.startswith("prey_"):
+				arr = self.cell_params.get(pname)
+				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+					arr[prey_death_mask] = np.nan
+			elif pname.startswith("predator_"):
+				arr = self.cell_params.get(pname)
+				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+					arr[pred_death_mask] = np.nan
 
 		# Precompute neighbor shifts
 		if self.neighborhood == "neumann":
@@ -448,13 +674,74 @@ class PP(CA):
 				if state == 1:
 					# Prey reproduces into empty neighbor (reference must be empty)
 					if grid_ref[nr, nc] == 0:
-						if self.generator.random() < float(self.params["prey_birth"]):
+						# per-parent birth prob
+						bp = float(self.params["prey_birth"])
+						cpb = self.cell_params.get("prey_birth")
+						if isinstance(cpb, np.ndarray) and cpb.shape == self.grid.shape:
+							pval = cpb[r, c]
+							if np.isnan(pval):
+								pval = bp
+						else:
+							pval = bp
+						if self.generator.random() < float(pval):
+							# birth: set new prey and inherit per-cell params (if any)
 							self.grid[nr, nc] = 1
+							# clear other-species params at target
+							for pname, meta in self._evolve_info.items():
+								if pname.startswith("predator_"):
+									arr = self.cell_params.get(pname)
+									if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+										arr[nr, nc] = np.nan
+							# assign evolved params for prey from parent
+							for pname, meta in self._evolve_info.items():
+								if not pname.startswith("prey_"):
+									continue
+								arr = self.cell_params.get(pname)
+								if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+									parent_val = arr[r, c]
+									if np.isnan(parent_val):
+										parent_val = float(self.params.get(pname, 0.0))
+									sd = float(meta["sd"])
+									mn = float(meta["min"])
+									mx = float(meta["max"])
+									child_val = parent_val + self.generator.normal(0.0, sd)
+									child_val = float(np.clip(child_val, mn, mx))
+									arr[nr, nc] = child_val
 				elif state == 2:
 					# Predator reproduces into prey neighbor (reference must be prey)
 					if grid_ref[nr, nc] == 1:
-						if self.generator.random() < float(self.params["predator_birth"]):
+						bp = float(self.params["predator_birth"])
+						cpb = self.cell_params.get("predator_birth")
+						if isinstance(cpb, np.ndarray) and cpb.shape == self.grid.shape:
+							pval = cpb[r, c]
+							if np.isnan(pval):
+								pval = bp
+						else:
+							pval = bp
+						if self.generator.random() < float(pval):
+							# predator converts prey -> predator: assign and handle params
 							self.grid[nr, nc] = 2
+							# clear prey-specific params at the eaten cell
+							for pname in list(self._evolve_info.keys()):
+								if pname.startswith("prey_"):
+									arr = self.cell_params.get(pname)
+									if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+										arr[nr, nc] = np.nan
+							# assign predator params inherited from parent
+							for pname, meta in self._evolve_info.items():
+								if not pname.startswith("predator_"):
+									continue
+								arr = self.cell_params.get(pname)
+								if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
+									parent_val = arr[r, c]
+									if np.isnan(parent_val):
+										parent_val = float(self.params.get(pname, 0.0))
+									sd = float(meta["sd"])
+									mn = float(meta["min"])
+									mx = float(meta["max"])
+									child_val = parent_val + self.generator.normal(0.0, sd)
+									child_val = float(np.clip(child_val, mn, mx))
+									arr[nr, nc] = child_val
 
 	def update(self) -> None:
 		"""Dispatch to synchronous or asynchronous update mode."""
