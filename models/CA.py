@@ -1,126 +1,464 @@
-from typing import Tuple, Dict, Any, Optional
+"""Cellular automaton base class.
+
+Defines a CA class with initialization, neighbor counting, update (to override),
+and run loop. Uses a numpy Generator for all randomness and supports
+Neumann and Moore neighborhoods with periodic boundaries.
+"""
+from typing import Tuple, Dict, Optional
+
 import numpy as np
 
+
 class CA:
-	"""Cellular Automaton container.
+	"""Base cellular automaton class.
 
 	Attributes
-	- `grid` (np.ndarray): 2D integer array with cell states (0 = empty).
-	- `neighborhood` (str): either "neumann" or "moore".
-	- `generator` (np.random.Generator): RNG used for all random operations.
-	- `params` (dict): user-provided parameters.
+	- n_species: number of distinct (non-zero) states
+	- grid: 2D numpy array containing integers in {0, 1, ..., n_species}
+	- neighborhood: either "neumann" or "moore"
+	- generator: numpy.random.Generator used for all randomness
+	- params: global parameters dict
+	- cell_params: local (per-cell) parameters dict
 	"""
+
+	# Default colormap spec (string or sequence); resolved in `visualize` at runtime
+	_default_cmap = "viridis"
 
 	def __init__(
 		self,
 		rows: int,
 		cols: int,
 		densities: Tuple[float, ...],
-		neighborhood: str = "neumann",
-		params: Optional[Dict[str, Any]] = None,
+		neighborhood: str,
+		params: Dict[str, object],
+		cell_params: Dict[str, object],
 		seed: Optional[int] = None,
 	) -> None:
-		"""Initialize the CA.
+		"""Initialize the cellular automaton.
 
 		Args:
-		- `rows` (int): number of rows (> 0).
-		- `cols` (int): number of columns (> 0).
-		- `densities` (tuple of float): density fraction for each species (each >= 0).
-		- `neighborhood` (str): either "neumann" or "moore".
-		- `params` (dict, optional): additional parameters to store.
-		- `seed` (int or None): seed for the RNG.
+		- rows (int): number of rows (>0)
+		- cols (int): number of columns (>0)
+		- densities (tuple of floats): initial density for each species. The
+		  length of this tuple defines `n_species`. Values must be >=0 and sum
+		  to at most 1. Each value gives the fraction of the grid to set to
+		  that species (state values are 1..n_species).
+		- neighborhood (str): either "neumann" (4-neighbors) or "moore"
+		  (8-neighbors).
+		- params (dict): global parameters.
+		- cell_params (dict): local per-cell parameters.
+		- seed (Optional[int]): seed for the numpy random generator.
 
-		Returns:
-		- None
-
-		Raises:
-		- AssertionError if arguments are invalid.
+		Returns: None
 		"""
-		assert isinstance(rows, int) and rows > 0, "`rows` must be a positive int"
-		assert isinstance(cols, int) and cols > 0, "`cols` must be a positive int"
-		assert isinstance(densities, tuple) or isinstance(densities, list), "`densities` must be a tuple or list"
-		densities = tuple(float(d) for d in densities)
-		assert all(d >= 0 for d in densities), "all densities must be non-negative"
-		assert sum(densities) <= 1.0 + 1e-12, "sum of densities must not exceed 1"
+		assert isinstance(rows, int) and rows > 0, "rows must be positive int"
+		assert isinstance(cols, int) and cols > 0, "cols must be positive int"
+		assert isinstance(densities, tuple) and len(densities) > 0, "densities must be a non-empty tuple"
+		for d in densities:
+			assert isinstance(d, (float, int)) and d >= 0, "each density must be non-negative"
+		total_density = float(sum(densities))
+		assert total_density <= 1.0 + 1e-12, "sum of densities must not exceed 1"
 		assert neighborhood in ("neumann", "moore"), "neighborhood must be 'neumann' or 'moore'"
 
-		self.params: Dict[str, Any] = dict(params) if params is not None else {}
-		self.generator: np.random.Generator = np.random.default_rng(seed)
+		self.n_species: int = len(densities)
+		self.params: Dict[str, object] = dict(params) if params is not None else {}
+		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
 		self.neighborhood: str = neighborhood
+		self.generator: np.random.Generator = np.random.default_rng(seed)
 
-		self.rows = rows
-		self.cols = cols
 		self.grid: np.ndarray = np.zeros((rows, cols), dtype=int)
 
 		total_cells = rows * cols
-
-		# Fill grid for each species (states 1..N) according to densities.
-		# Use floor to avoid over-allocation; do not overwrite non-zero cells.
-		for i, d in enumerate(densities):
-			if d <= 0:
+		# Fill grid with species states 1..n_species according to densities.
+		for i, dens in enumerate(densities):
+			if dens <= 0:
 				continue
-			desired = int(np.floor(total_cells * d))
-			if desired <= 0:
+			n_to_fill = int(round(total_cells * float(dens)))
+			if n_to_fill <= 0:
 				continue
-
-			# available positions (flat indices)
-			available = np.flatnonzero(self.grid.ravel() == 0)
-			if len(available) == 0:
+			empty_flat = np.flatnonzero(self.grid.ravel() == 0)
+			if len(empty_flat) == 0:
 				break
-
-			take = min(desired, len(available))
-			chosen = self.generator.choice(available, size=take, replace=False)
-			self.grid.ravel()[chosen] = i + 1
-
-		# store number of species expected based on densities length
-		self._n_species = len(densities)
+			n_choice = min(n_to_fill, len(empty_flat))
+			chosen = self.generator.choice(empty_flat, size=n_choice, replace=False)
+			# assign chosen flattened indices to state i+1
+			r = chosen // cols
+			c = chosen % cols
+			self.grid[r, c] = i + 1
 
 	def count_neighbors(self) -> Tuple[np.ndarray, ...]:
 		"""Count neighbors for each non-zero state.
 
-		Uses periodic boundary conditions and the neighborhood specified in the instance.
+		Returns a tuple of numpy arrays, one array for each state in
+		`1..n_species`. Each returned array has the same shape as `grid`
+		and contains the integer number of neighbors of that state for
+		each cell, using periodic boundaries and the configured
+		neighborhood type.
 
 		Returns:
-		- Tuple of np.ndarray: each array has shape `(rows, cols)` and contains
-		  the count of neighbors of state k (for k = 1..N) at each cell.
+		- tuple of np.ndarray: one array per species (state 1..n_species)
 		"""
-		neighbors = []
+		counts = []
+		# Define neighbor shifts
+		if self.neighborhood == "neumann":
+			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+		else:  # moore
+			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
-		if self.neighborhood == "moore":
-			offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-		else:  # neumann
-			offsets = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-
-		for state in range(1, self._n_species + 1):
+		for state in range(1, self.n_species + 1):
 			mask = (self.grid == state).astype(int)
-			count = np.zeros_like(self.grid, dtype=int)
-			for dr, dc in offsets:
-				shifted = np.roll(np.roll(mask, dr, axis=0), dc, axis=1)
-				count += shifted
-			neighbors.append(count)
+			neigh = np.zeros_like(mask)
+			for dr, dc in shifts:
+				neigh += np.roll(np.roll(mask, shift=dr, axis=0), shift=dc, axis=1)
+			counts.append(neigh)
 
-		return tuple(neighbors)
+		return tuple(counts)
 
 	def update(self) -> None:
-		"""Perform a single update of the CA.
+		"""Perform one update step.
 
-		This method is intentionally left as a stub; implement specific rule
-		logic by overriding or editing this method.
+		This base implementation must be overridden by subclasses. It raises
+		NotImplementedError to indicate it should be provided by concrete
+		models that inherit from `CA`.
 
-		Returns:
-		- None
+		Returns: None
 		"""
-		pass
+		raise NotImplementedError("Override update() in a subclass to define CA dynamics")
 
 	def run(self, steps: int) -> None:
-		"""Run the CA for a number of iterations.
+		"""Run the CA for a number of steps.
 
 		Args:
-		- `steps` (int): number of iterations to execute (>= 0).
+		- steps (int): number of iterations to run (must be non-negative).
 
-		Returns:
-		- None
+		Returns: None
 		"""
-		assert isinstance(steps, int) and steps >= 0, "`steps` must be a non-negative int"
-		for _ in range(steps):
+		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
+		for i in range(steps):
 			self.update()
+			# Update visualization if enabled every `interval` iterations
+			if getattr(self, "_viz_on", False):
+				# iteration number is 1-based for display
+				try:
+					self._viz_update(i + 1)
+				except Exception:
+					# Don't let visualization errors stop the simulation
+					pass
+
+	def visualize(
+		self,
+		interval: int = 1,
+		figsize: Tuple[float, float] = (5, 5),
+		pause: float = 0.001,
+		cmap=None,
+	) -> None:
+		"""Enable interactive visualization of the grid.
+
+		Args:
+		- interval: update plot every `interval` iterations (>=1)
+		- figsize: figure size passed to matplotlib
+		- pause: seconds to pause after draw (controls responsiveness)
+		- cmap: colormap spec (string, sequence of colors, or matplotlib Colormap).
+		
+		This function imports matplotlib lazily so simulations without
+		visualization do not require matplotlib to be installed.
+		"""
+		if not isinstance(interval, int) or interval < 1:
+			raise ValueError("interval must be a positive integer")
+
+		# Lazy import so matplotlib is optional
+		import matplotlib.pyplot as plt
+		from matplotlib.colors import ListedColormap
+
+		# Resolve default cmap: prefer instance attribute override
+		c_spec = self._default_cmap if cmap is None else cmap
+
+		# Build a discrete colormap with entries for states 0..n_species
+		n_colors_needed = self.n_species + 1
+		if isinstance(c_spec, str):
+			# request discrete version of named colormap
+			cmap_obj = plt.get_cmap(c_spec, n_colors_needed)
+		elif isinstance(c_spec, (list, tuple)):
+			colors = list(c_spec)
+			if len(colors) < n_colors_needed:
+				colors = colors + [colors[-1]] * (n_colors_needed - len(colors))
+			cmap_obj = ListedColormap(colors[:n_colors_needed])
+		else:
+			# Assume user provided a Colormap-like object
+			cmap_obj = c_spec
+
+		plt.ion()
+		fig, ax = plt.subplots(figsize=figsize)
+		im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+		ax.set_title("Iteration 0")
+		plt.show(block=False)
+		fig.canvas.draw()
+		plt.pause(pause)
+
+		# Store visualization state on the instance (only when visualization enabled)
+		self._viz_on = True
+		self._viz_interval = interval
+		self._viz_fig = fig
+		self._viz_ax = ax
+		self._viz_im = im
+		self._viz_cmap = cmap_obj
+		self._viz_pause = float(pause)
+
+	def _viz_update(self, iteration: int) -> None:
+		"""Update the interactive plot if the configured interval has passed.
+
+		This function also performs the minimal redraw using `plt.pause` so the
+		plot remains responsive.
+		"""
+		if not getattr(self, "_viz_on", False):
+			return
+		if (iteration % int(self._viz_interval)) != 0:
+			return
+
+		# Lazy import for pause; matplotlib already imported in visualize
+		import matplotlib.pyplot as plt
+
+		self._viz_im.set_data(self.grid)
+		self._viz_ax.set_title(f"Iteration {iteration}")
+		# draw/update
+		self._viz_fig.canvas.draw_idle()
+		plt.pause(self._viz_pause)
+
+
+class PP(CA):
+	"""Predator-prey CA.
+
+	States: 0 = empty, 1 = prey, 2 = predator
+
+	Parameters (in `params` dict). Allowed keys and defaults:
+	- "prey_death": 0.05
+	- "predator_death": 0.1
+	- "prey_birth": 0.25
+	- "predator_birth": 0.2
+
+	The constructor validates parameters are in [0,1] and raises if
+	other user-supplied params are present. The `synchronous` flag
+	chooses the update mode (default False -> asynchronous updates).
+	"""
+
+	# Default colors: 0=empty black, 1=prey green, 2=predator red
+	_default_cmap = ("black", "green", "red")
+
+	def __init__(
+		self,
+		rows: int,
+		cols: int,
+		densities: Tuple[float, ...],
+		neighborhood: str,
+		params: Dict[str, object],
+		cell_params: Dict[str, object],
+		seed: Optional[int] = None,
+		synchronous: bool = False,
+	) -> None:
+		# Allowed params and defaults
+		_defaults = {
+			"prey_death": 0.05,
+			"predator_death": 0.1,
+			"prey_birth": 0.25,
+			"predator_birth": 0.2,
+		}
+
+		# Validate user-supplied params: only allowed keys
+		if params is None:
+			merged_params = dict(_defaults)
+		else:
+			if not isinstance(params, dict):
+				raise TypeError("params must be a dict or None")
+			extra = set(params.keys()) - set(_defaults.keys())
+			if extra:
+				raise ValueError(f"Unexpected parameter keys: {sorted(list(extra))}")
+			# Do not override user-set values: start from defaults then update with user values
+			merged_params = dict(_defaults)
+			merged_params.update(params)
+
+		# Validate numerical ranges
+		for k, v in merged_params.items():
+			if not isinstance(v, (int, float)):
+				raise TypeError(f"Parameter '{k}' must be a number between 0 and 1")
+			if not (0.0 <= float(v) <= 1.0):
+				raise ValueError(f"Parameter '{k}' must be between 0 and 1")
+
+		# Call base initializer with merged params
+		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
+
+		self.synchronous: bool = bool(synchronous)
+
+	def update_sync(self) -> None:
+		"""Synchronous (vectorized) update.
+
+		Implements a vectorized equivalent of the random-sequential
+		asynchronous update. Each occupied cell (prey or predator) gets at
+		most one reproduction attempt: with probability `birth` it chooses a
+		random neighbor and, if that neighbor in the reference grid has the
+		required target state (empty for prey, prey for predator), it
+		becomes a candidate attempt. When multiple reproducers target the
+		same cell, one attempt is chosen uniformly at random to succeed.
+		Deaths are applied the same vectorized way as in the async update.
+		"""
+
+		rows, cols = self.grid.shape
+		grid_ref = self.grid.copy()
+
+		# Sample deaths based on the reference grid and apply them first.
+		# Death probabilities are sampled from the state at the start of
+		# the iteration (grid_ref) so sampling remains consistent.
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+
+		# Apply deaths to the current grid. We deliberately do this before
+		# reproduction but keep using `grid_ref` for all reproduction checks
+		# below to preserve the original (birth-before-death) semantics.
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
+
+		# Precompute neighbor shifts and arrays for indexing (used by reproduction)
+		if self.neighborhood == "neumann":
+			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+		else:
+			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+		dr_arr = np.array([s[0] for s in shifts], dtype=int)
+		dc_arr = np.array([s[1] for s in shifts], dtype=int)
+		n_shifts = len(shifts)
+
+		def _process_reproduction(sources, birth_prob, target_state_required, new_state_val):
+			"""Handle reproduction attempts from `sources`.
+
+			sources: (M,2) array of (r,c) positions in grid_ref
+			birth_prob: scalar probability that a source attempts reproduction
+			target_state_required: state value required in grid_ref at target
+			new_state_val: state to write into self.grid for successful targets
+			"""
+			if sources.size == 0:
+				return
+
+			M = sources.shape[0]
+			# Which sources attempt reproduction
+			attempt_mask = self.generator.random(M) < float(birth_prob)
+			if not np.any(attempt_mask):
+				return
+
+			src = sources[attempt_mask]
+			K = src.shape[0]
+
+			# Each attempting source picks one neighbor uniformly
+			nbr_idx = self.generator.integers(0, n_shifts, size=K)
+			nr = (src[:, 0] + dr_arr[nbr_idx]) % rows
+			nc = (src[:, 1] + dc_arr[nbr_idx]) % cols
+
+			# Only keep attempts where the reference grid at the target has the required state
+			valid_mask = (grid_ref[nr, nc] == target_state_required)
+			if not np.any(valid_mask):
+				return
+
+			nr = nr[valid_mask]
+			nc = nc[valid_mask]
+
+			# Flatten target indices to group collisions
+			target_flat = (nr * cols + nc).astype(np.int64)
+			# Sort targets to find groups that target the same cell
+			order = np.argsort(target_flat)
+			tf_sorted = target_flat[order]
+
+			# unique targets (on the sorted array) with start indices and counts
+			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
+			if uniq_targets.size == 0:
+				return
+
+			# For each unique target, pick one attempt uniformly at random
+			# idx_start gives indices into the sorted array
+			chosen_sorted_positions = []
+			for start, cnt in zip(idx_start, counts):
+				off = int(self.generator.integers(0, cnt))
+				chosen_sorted_positions.append(start + off)
+			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
+
+			# Map back to indices in the filtered attempts array
+			chosen_indices = order[chosen_sorted_positions]
+
+			chosen_target_flats = target_flat[chosen_indices]
+			chosen_rs = (chosen_target_flats // cols).astype(int)
+			chosen_cs = (chosen_target_flats % cols).astype(int)
+
+			# Apply successful births to the main grid
+			self.grid[chosen_rs, chosen_cs] = new_state_val
+
+		# Prey reproduce into empty cells (target state 0 -> new state 1)
+		prey_sources = np.argwhere(grid_ref == 1)
+		_process_reproduction(prey_sources, self.params["prey_birth"], 0, 1)
+
+		# Predators reproduce into prey cells (target state 1 -> new state 2)
+		pred_sources = np.argwhere(grid_ref == 2)
+		_process_reproduction(pred_sources, self.params["predator_birth"], 1, 2)
+
+	def update_async(self) -> None:
+		"""Asynchronous (random-sequential) update.
+
+		Rules (applied using a copy of the current grid for reference):
+		- Iterate occupied cells in random order.
+		- Prey (1): pick random neighbor; if neighbor was empty in copy,
+		  reproduce into it with probability `prey_birth`.
+		- Predator (2): pick random neighbor; if neighbor was prey in copy,
+		  reproduce into it (convert to predator) with probability `predator_birth`.
+		- After the reproduction loop, apply deaths synchronously using the
+		  copy as the reference so newly created individuals are not instantly
+		  killed. Deaths only remove individuals if the current cell still
+		  matches the species from the reference copy.
+		"""
+		rows, cols = self.grid.shape
+		grid_ref = self.grid.copy()
+
+		# Sample and apply deaths first (based on the reference grid). Deaths
+		# are sampled from `grid_ref` so statistics remain identical.
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
+
+		# Precompute neighbor shifts
+		if self.neighborhood == "neumann":
+			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+		else:
+			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+		# Get occupied cells from the original reference grid and shuffle.
+		# We iterate over `grid_ref` so that sources can die and reproduce
+		# in the same iteration, meaning we are order-agnostic.
+		occupied = np.argwhere(grid_ref != 0)
+		if occupied.size > 0:
+			order = self.generator.permutation(len(occupied))
+			for idx in order:
+				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
+				state = int(grid_ref[r, c])
+				# pick a random neighbor shift
+				dr, dc = shifts[self.generator.integers(0, len(shifts))]
+				nr = (r + dr) % rows
+				nc = (c + dc) % cols
+				if state == 1:
+					# Prey reproduces into empty neighbor (reference must be empty)
+					if grid_ref[nr, nc] == 0:
+						if self.generator.random() < float(self.params["prey_birth"]):
+							self.grid[nr, nc] = 1
+				elif state == 2:
+					# Predator reproduces into prey neighbor (reference must be prey)
+					if grid_ref[nr, nc] == 1:
+						if self.generator.random() < float(self.params["predator_birth"]):
+							self.grid[nr, nc] = 2
+
+	def update(self) -> None:
+		"""Dispatch to synchronous or asynchronous update mode."""
+		if self.synchronous:
+			self.update_sync()
+		else:
+			self.update_async()
