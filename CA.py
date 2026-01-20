@@ -136,18 +136,19 @@ class CA:
 
 
 class PP(CA):
-	"""Predator-Prey cellular automaton.
+	"""Predator-prey CA.
 
 	States: 0 = empty, 1 = prey, 2 = predator
 
-	Expected params keys (all values in [0,1]):
-	- "prey_death": probability a prey dies each step
-	- "predator_death": probability a predator dies each step
-	- "reproduction": per-neighbor prey reproduction probability
-	- "consumption": per-neighbor predation probability
+	Parameters (in `params` dict). Allowed keys and defaults:
+	- "prey_death": 0.05
+	- "predator_death": 0.1
+	- "prey_birth": 0.25
+	- "predator_birth": 0.2
 
-	Defaults are provided for any missing keys and user-provided values
-	are preserved. Any unknown keys in `params` will raise a ValueError.
+	The constructor validates parameters are in [0,1] and raises if
+	other user-supplied params are present. The `synchronous` flag
+	chooses the update mode (default False -> asynchronous updates).
 	"""
 
 	def __init__(
@@ -159,82 +160,105 @@ class PP(CA):
 		params: Dict[str, object],
 		cell_params: Dict[str, object],
 		seed: Optional[int] = None,
+		synchronous: bool = False,
 	) -> None:
-		# initialize base CA
-		super().__init__(rows, cols, densities, neighborhood, params, cell_params, seed)
-
-		# Enforce predator-prey has exactly two species
-		assert self.n_species == 2, "PP model requires exactly two species (prey=1, predator=2)"
-
-		# Allowed parameter keys and defaults
-		_allowed = {
-			"prey_death": 0.02,
-			"predator_death": 0.05,
-			"reproduction": 0.2,
-			"consumption": 0.5,
+		# Allowed params and defaults
+		_defaults = {
+			"prey_death": 0.05,
+			"predator_death": 0.1,
+			"prey_birth": 0.25,
+			"predator_birth": 0.2,
 		}
 
-		# Check for unknown user-specified keys (in the params dict provided by user)
-		user_keys = set(self.params.keys())
-		unknown = user_keys.difference(_allowed.keys())
-		if len(unknown) > 0:
-			raise ValueError(f"Unknown parameter keys for PP: {sorted(list(unknown))}")
+		# Validate user-supplied params: only allowed keys
+		if params is None:
+			merged_params = dict(_defaults)
+		else:
+			if not isinstance(params, dict):
+				raise TypeError("params must be a dict or None")
+			extra = set(params.keys()) - set(_defaults.keys())
+			if extra:
+				raise ValueError(f"Unexpected parameter keys: {sorted(list(extra))}")
+			# Do not override user-set values: start from defaults then update with user values
+			merged_params = dict(_defaults)
+			merged_params.update(params)
 
-		# Fill defaults for missing keys without overriding user-specified values
-		for k, v in _allowed.items():
-			if k not in self.params:
-				self.params[k] = v
+		# Validate numerical ranges
+		for k, v in merged_params.items():
+			if not isinstance(v, (int, float)):
+				raise TypeError(f"Parameter '{k}' must be a number between 0 and 1")
+			if not (0.0 <= float(v) <= 1.0):
+				raise ValueError(f"Parameter '{k}' must be between 0 and 1")
 
-		# Validate parameter ranges
-		for k in _allowed.keys():
-			val = self.params[k]
-			if not isinstance(val, (int, float)):
-				raise TypeError(f"Parameter '{k}' must be numeric")
-			if not (0.0 <= float(val) <= 1.0):
-				raise ValueError(f"Parameter '{k}' must be between 0 and 1 (got {val})")
+		# Call base initializer with merged params
+		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
+
+		self.synchronous: bool = bool(synchronous)
+
+	def update_sync(self) -> None:
+		"""Synchronous update (not implemented)."""
+		raise NotImplementedError("Synchronous PP update not implemented")
+
+	def update_async(self) -> None:
+		"""Asynchronous (random-sequential) update.
+
+		Rules (applied using a copy of the current grid for reference):
+		- Iterate occupied cells in random order.
+		- Prey (1): pick random neighbor; if neighbor was empty in copy,
+		  reproduce into it with probability `prey_birth`.
+		- Predator (2): pick random neighbor; if neighbor was prey in copy,
+		  reproduce into it (convert to predator) with probability `predator_birth`.
+		- After the reproduction loop, apply deaths synchronously using the
+		  copy as the reference so newly created individuals are not instantly
+		  killed. Deaths only remove individuals if the current cell still
+		  matches the species from the reference copy.
+		"""
+		rows, cols = self.grid.shape
+		grid_ref = self.grid.copy()
+
+		# Precompute neighbor shifts
+		if self.neighborhood == "neumann":
+			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+		else:
+			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+		# Get occupied cells from the reference grid and shuffle
+		occupied = np.argwhere(grid_ref != 0)
+		if occupied.size > 0:
+			order = self.generator.permutation(len(occupied))
+			for idx in order:
+				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
+				state = int(grid_ref[r, c])
+				# pick a random neighbor shift
+				dr, dc = shifts[self.generator.integers(0, len(shifts))]
+				nr = (r + dr) % rows
+				nc = (c + dc) % cols
+				if state == 1:
+					# Prey reproduces into empty neighbor (reference must be empty)
+					if grid_ref[nr, nc] == 0:
+						if self.generator.random() < float(self.params["prey_birth"]):
+							self.grid[nr, nc] = 1
+				elif state == 2:
+					# Predator reproduces into prey neighbor (reference must be prey)
+					if grid_ref[nr, nc] == 1:
+						if self.generator.random() < float(self.params["predator_birth"]):
+							self.grid[nr, nc] = 2
+
+		# Vectorized synchronous deaths, based on grid_ref but only kill if
+		# the current grid still matches the referenced species (so newly
+		# occupied cells are not removed mistakenly).
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"])) & (self.grid == 1)
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"])) & (self.grid == 2)
+
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
 
 	def update(self) -> None:
-		"""One update step for predator-prey dynamics.
-
-		Uses a copy of the current grid to evaluate rules so newly changed
-		cells do not immediately influence other rules in the same step.
-		"""
-		# copy of the grid to base all decisions on
-		old = self.grid.copy()
-
-		# neighbor counts for each species (index 0 -> prey, 1 -> predator)
-		counts = self.count_neighbors()
-		prey_neighbors = counts[0]
-		pred_neighbors = counts[1] if self.n_species >= 2 else np.zeros_like(self.grid)
-
-		rows, cols = self.grid.shape
-		# Reproduction into empty cells from neighboring prey
-		empty_mask = old == 0
-		# probability that at least one neighboring prey reproduces into the cell
-		birth_param = float(self.params["reproduction"])
-		birth_prob = 1.0 - np.power(1.0 - birth_param, prey_neighbors)
-		rand = self.generator.random(size=(rows, cols))
-		birth_cells = empty_mask & (prey_neighbors > 0) & (rand < birth_prob)
-		self.grid[birth_cells] = 1
-
-		# Predation: prey replaced by predator due to neighboring predators
-		prey_mask = old == 1
-		cons_param = float(self.params["consumption"])
-		cons_prob = 1.0 - np.power(1.0 - cons_param, pred_neighbors)
-		rand = self.generator.random(size=(rows, cols))
-		predation_cells = prey_mask & (pred_neighbors > 0) & (rand < cons_prob)
-		self.grid[predation_cells] = 2
-
-		# Deaths: use the copied `old` grid so newly-occupied cells are not killed immediately
-		# Prey death
-		prey_death_p = float(self.params["prey_death"])
-		rand = self.generator.random(size=(rows, cols))
-		prey_death_cells = (old == 1) & (rand < prey_death_p)
-		self.grid[prey_death_cells] = 0
-
-		# Predator death
-		pred_death_p = float(self.params["predator_death"])
-		rand = self.generator.random(size=(rows, cols))
-		pred_death_cells = (old == 2) & (rand < pred_death_p)
-		self.grid[pred_death_cells] = 0
-
+		"""Dispatch to synchronous or asynchronous update mode."""
+		if self.synchronous:
+			self.update_sync()
+		else:
+			self.update_async()
