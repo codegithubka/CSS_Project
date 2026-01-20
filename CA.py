@@ -21,6 +21,9 @@ class CA:
 	- cell_params: local (per-cell) parameters dict
 	"""
 
+	# Default colormap spec (string or sequence); resolved in `visualize` at runtime
+	_default_cmap = "viridis"
+
 	def __init__(
 		self,
 		rows: int,
@@ -131,8 +134,95 @@ class CA:
 		Returns: None
 		"""
 		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
-		for _ in range(steps):
+		for i in range(steps):
 			self.update()
+			# Update visualization if enabled every `interval` iterations
+			if getattr(self, "_viz_on", False):
+				# iteration number is 1-based for display
+				try:
+					self._viz_update(i + 1)
+				except Exception:
+					# Don't let visualization errors stop the simulation
+					pass
+
+	def visualize(
+		self,
+		interval: int = 1,
+		figsize: Tuple[float, float] = (5, 5),
+		pause: float = 0.001,
+		cmap=None,
+	) -> None:
+		"""Enable interactive visualization of the grid.
+
+		Args:
+		- interval: update plot every `interval` iterations (>=1)
+		- figsize: figure size passed to matplotlib
+		- pause: seconds to pause after draw (controls responsiveness)
+		- cmap: colormap spec (string, sequence of colors, or matplotlib Colormap).
+		
+		This function imports matplotlib lazily so simulations without
+		visualization do not require matplotlib to be installed.
+		"""
+		if not isinstance(interval, int) or interval < 1:
+			raise ValueError("interval must be a positive integer")
+
+		# Lazy import so matplotlib is optional
+		import matplotlib.pyplot as plt
+		from matplotlib.colors import ListedColormap
+
+		# Resolve default cmap: prefer instance attribute override
+		c_spec = self._default_cmap if cmap is None else cmap
+
+		# Build a discrete colormap with entries for states 0..n_species
+		n_colors_needed = self.n_species + 1
+		if isinstance(c_spec, str):
+			# request discrete version of named colormap
+			cmap_obj = plt.get_cmap(c_spec, n_colors_needed)
+		elif isinstance(c_spec, (list, tuple)):
+			colors = list(c_spec)
+			if len(colors) < n_colors_needed:
+				colors = colors + [colors[-1]] * (n_colors_needed - len(colors))
+			cmap_obj = ListedColormap(colors[:n_colors_needed])
+		else:
+			# Assume user provided a Colormap-like object
+			cmap_obj = c_spec
+
+		plt.ion()
+		fig, ax = plt.subplots(figsize=figsize)
+		im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+		ax.set_title("Iteration 0")
+		plt.show(block=False)
+		fig.canvas.draw()
+		plt.pause(pause)
+
+		# Store visualization state on the instance (only when visualization enabled)
+		self._viz_on = True
+		self._viz_interval = interval
+		self._viz_fig = fig
+		self._viz_ax = ax
+		self._viz_im = im
+		self._viz_cmap = cmap_obj
+		self._viz_pause = float(pause)
+
+	def _viz_update(self, iteration: int) -> None:
+		"""Update the interactive plot if the configured interval has passed.
+
+		This function also performs the minimal redraw using `plt.pause` so the
+		plot remains responsive.
+		"""
+		if not getattr(self, "_viz_on", False):
+			return
+		if (iteration % int(self._viz_interval)) != 0:
+			return
+
+		# Lazy import for pause; matplotlib already imported in visualize
+		import matplotlib.pyplot as plt
+
+		self._viz_im.set_data(self.grid)
+		self._viz_ax.set_title(f"Iteration {iteration}")
+		# draw/update
+		self._viz_fig.canvas.draw_idle()
+		plt.pause(self._viz_pause)
 
 
 class PP(CA):
@@ -150,6 +240,9 @@ class PP(CA):
 	other user-supplied params are present. The `synchronous` flag
 	chooses the update mode (default False -> asynchronous updates).
 	"""
+
+	# Default colors: 0=empty black, 1=prey green, 2=predator red
+	_default_cmap = ("black", "green", "red")
 
 	def __init__(
 		self,
@@ -211,7 +304,22 @@ class PP(CA):
 		rows, cols = self.grid.shape
 		grid_ref = self.grid.copy()
 
-		# Precompute neighbor shifts and arrays for indexing
+		# Sample deaths based on the reference grid and apply them first.
+		# Death probabilities are sampled from the state at the start of
+		# the iteration (grid_ref) so sampling remains consistent.
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+
+		# Apply deaths to the current grid. We deliberately do this before
+		# reproduction but keep using `grid_ref` for all reproduction checks
+		# below to preserve the original (birth-before-death) semantics.
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
+
+		# Precompute neighbor shifts and arrays for indexing (used by reproduction)
 		if self.neighborhood == "neumann":
 			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 		else:
@@ -243,7 +351,6 @@ class PP(CA):
 			# Each attempting source picks one neighbor uniformly
 			nbr_idx = self.generator.integers(0, n_shifts, size=K)
 			nr = (src[:, 0] + dr_arr[nbr_idx]) % rows
-		
 			nc = (src[:, 1] + dc_arr[nbr_idx]) % cols
 
 			# Only keep attempts where the reference grid at the target has the required state
@@ -291,16 +398,6 @@ class PP(CA):
 		pred_sources = np.argwhere(grid_ref == 2)
 		_process_reproduction(pred_sources, self.params["predator_birth"], 1, 2)
 
-		# Vectorized synchronous deaths (same as async implementation)
-		rand_prey = self.generator.random(self.grid.shape)
-		rand_pred = self.generator.random(self.grid.shape)
-
-		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"])) & (self.grid == 1)
-		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"])) & (self.grid == 2)
-
-		self.grid[prey_death_mask] = 0
-		self.grid[pred_death_mask] = 0
-
 	def update_async(self) -> None:
 		"""Asynchronous (random-sequential) update.
 
@@ -318,13 +415,26 @@ class PP(CA):
 		rows, cols = self.grid.shape
 		grid_ref = self.grid.copy()
 
+		# Sample and apply deaths first (based on the reference grid). Deaths
+		# are sampled from `grid_ref` so statistics remain identical.
+		rand_prey = self.generator.random(self.grid.shape)
+		rand_pred = self.generator.random(self.grid.shape)
+
+		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"]))
+		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"]))
+
+		self.grid[prey_death_mask] = 0
+		self.grid[pred_death_mask] = 0
+
 		# Precompute neighbor shifts
 		if self.neighborhood == "neumann":
 			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
 		else:
 			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
-		# Get occupied cells from the reference grid and shuffle
+		# Get occupied cells from the original reference grid and shuffle.
+		# We iterate over `grid_ref` so that sources can die and reproduce
+		# in the same iteration, meaning we are order-agnostic.
 		occupied = np.argwhere(grid_ref != 0)
 		if occupied.size > 0:
 			order = self.generator.permutation(len(occupied))
@@ -345,18 +455,6 @@ class PP(CA):
 					if grid_ref[nr, nc] == 1:
 						if self.generator.random() < float(self.params["predator_birth"]):
 							self.grid[nr, nc] = 2
-
-		# Vectorized synchronous deaths, based on grid_ref but only kill if
-		# the current grid still matches the referenced species (so newly
-		# occupied cells are not removed mistakenly).
-		rand_prey = self.generator.random(self.grid.shape)
-		rand_pred = self.generator.random(self.grid.shape)
-
-		prey_death_mask = (grid_ref == 1) & (rand_prey < float(self.params["prey_death"])) & (self.grid == 1)
-		pred_death_mask = (grid_ref == 2) & (rand_pred < float(self.params["predator_death"])) & (self.grid == 2)
-
-		self.grid[prey_death_mask] = 0
-		self.grid[pred_death_mask] = 0
 
 	def update(self) -> None:
 		"""Dispatch to synchronous or asynchronous update mode."""

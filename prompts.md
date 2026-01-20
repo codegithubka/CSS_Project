@@ -413,3 +413,116 @@ Implement the synchronous updating for the PP class as a vectorized (optimized) 
 		self.grid[pred_death_mask] = 0
 
 ### changes
+Swapped the order of birth and death checks. This results in the same behavior, but removes the need to check whether the post-birth grid matches the reference grid.
+
+## Add basic visualisations
+Basic tests pass and the grid updates seem plausible, but to see it in better detail we need to add visualisation. A first step in this is an imshow plot which updates every N iterations.
+
+### prompt
+Add optional grid visualisation support to the CA class. Use matplotlib.pyplot's interactive mode to dynamically update the the plot every N intervals. Do this by adding a function visualize which takes the interval, the figsize, the pause, and a colormap. this function should turn on the visualisation, creating the necessary variables. Ensure that there is reasonable default behavior for all arguments, including the colormap. Make sure the plot gets updated each interval iterations inside of the run function, showing the current iteration. if this would bloat the run function, add a helper function to update the plot.
+
+Next, update the PP class to change the default to a black empty cells, with green prey and red predators. Again, ensure that this can be overridden by the user when calling visualize, just like the other arguments.
+
+For both classes, ensure that the matplotlib library is not needed to run the simulation without visualisation. Also, make the necessary overrides (for the colormap default for instance) as short as possible. I do not want classes inheriting CA to have to override the entire visualize function just to change the default color map. However, if visualization is off, there is no need to store any of the variables in the CA / PP class.
+
+### output (also added the defaults)
+	def run(self, steps: int) -> None:
+		"""Run the CA for a number of steps.
+
+		Args:
+		- steps (int): number of iterations to run (must be non-negative).
+
+		Returns: None
+		"""
+		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
+		for i in range(steps):
+			self.update()
+			# Update visualization if enabled every `interval` iterations
+			if getattr(self, "_viz_on", False):
+				# iteration number is 1-based for display
+				try:
+					self._viz_update(i + 1)
+				except Exception:
+					# Don't let visualization errors stop the simulation
+					pass
+
+	def visualize(
+		self,
+		interval: int = 1,
+		figsize: Tuple[float, float] = (5, 5),
+		pause: float = 0.001,
+		cmap=None,
+	) -> None:
+		"""Enable interactive visualization of the grid.
+
+		Args:
+		- interval: update plot every `interval` iterations (>=1)
+		- figsize: figure size passed to matplotlib
+		- pause: seconds to pause after draw (controls responsiveness)
+		- cmap: colormap spec (string, sequence of colors, or matplotlib Colormap).
+		
+		This function imports matplotlib lazily so simulations without
+		visualization do not require matplotlib to be installed.
+		"""
+		if not isinstance(interval, int) or interval < 1:
+			raise ValueError("interval must be a positive integer")
+
+		# Lazy import so matplotlib is optional
+		import matplotlib.pyplot as plt
+		from matplotlib.colors import ListedColormap
+
+		# Resolve default cmap: prefer instance attribute override
+		c_spec = self._default_cmap if cmap is None else cmap
+
+		# Build a discrete colormap with entries for states 0..n_species
+		n_colors_needed = self.n_species + 1
+		if isinstance(c_spec, str):
+			# request discrete version of named colormap
+			cmap_obj = plt.get_cmap(c_spec, n_colors_needed)
+		elif isinstance(c_spec, (list, tuple)):
+			colors = list(c_spec)
+			if len(colors) < n_colors_needed:
+				colors = colors + [colors[-1]] * (n_colors_needed - len(colors))
+			cmap_obj = ListedColormap(colors[:n_colors_needed])
+		else:
+			# Assume user provided a Colormap-like object
+			cmap_obj = c_spec
+
+		plt.ion()
+		fig, ax = plt.subplots(figsize=figsize)
+		im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+		ax.set_title("Iteration 0")
+		plt.show(block=False)
+		fig.canvas.draw()
+		plt.pause(pause)
+
+		# Store visualization state on the instance (only when visualization enabled)
+		self._viz_on = True
+		self._viz_interval = interval
+		self._viz_fig = fig
+		self._viz_ax = ax
+		self._viz_im = im
+		self._viz_cmap = cmap_obj
+		self._viz_pause = float(pause)
+
+	def _viz_update(self, iteration: int) -> None:
+		"""Update the interactive plot if the configured interval has passed.
+
+		This function also performs the minimal redraw using `plt.pause` so the
+		plot remains responsive.
+		"""
+		if not getattr(self, "_viz_on", False):
+			return
+		if (iteration % int(self._viz_interval)) != 0:
+			return
+
+		# Lazy import for pause; matplotlib already imported in visualize
+		import matplotlib.pyplot as plt
+
+		self._viz_im.set_data(self.grid)
+		self._viz_ax.set_title(f"Iteration {iteration}")
+		# draw/update
+		self._viz_fig.canvas.draw_idle()
+		plt.pause(self._viz_pause)
+
+### changes
