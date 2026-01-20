@@ -19,6 +19,10 @@ pip install numpy scipy matplotlib joblib
 
 python3 pp_analysis.py --mode full --dry-run
 
+# For async run
+
+python3 pp_analysis.py --mode full --output results_${SLURM_JOB_ID} --cores $SLURM_CPUS_PER_TASK --async
+
 # To submit a job
 
 sbatch run_analysis.sh

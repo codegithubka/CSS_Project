@@ -256,7 +256,7 @@ def run_single_simulation(
         neighborhood="moore",
         params=params,
         seed=seed,
-        syncrhonous = cfg.synchronous # Use synchronous/async updates
+        synchronous = cfg.synchronous # Use synchronous/async updates
     )
 
     if with_evolution:

@@ -4,7 +4,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --mem=32G
 #SBATCH --output=pp_analysis_%j.out
 #SBATCH --error=pp_analysis_%j.err
@@ -41,7 +41,6 @@ echo "========================================"
 # -----------------------------------------------------------------------------
 
 # Load modules (adjust to your Snellius setup)
-# Load modules (adjust to your Snellius setup)
 source ~/snellius_venv/bin/activate
 
 # If you have a virtual environment with your models package:
@@ -69,6 +68,9 @@ python3 pp_analysis.py \
     --mode full \
     --output $OUTPUT_DIR \
     --cores $SLURM_CPUS_PER_TASK
+
+# For asynchronous execution (uncomment if needed)
+#python3 pp_analysis.py --mode full --output $OUTPUT_DIR --cores $SLURM_CPUS_PER_TASK --async
 
 # -----------------------------------------------------------------------------
 # Completion
