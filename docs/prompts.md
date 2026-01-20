@@ -538,6 +538,13 @@ In the asynchronous and synchronous update functions, make the following changes
 
 Ensure that if the cell_params grids are set (by the evolve function), the cell-specific parameters are used in the updates. For instance, the deaths of the prey should be calculated based on the values in the cell_params grid, not the global params value. Since the cell_params grid's only non-zero (or non-NaN) entries are active cells of the relevant species, there is no need to get the occupied prey / predator cells from PP.grid.
 
+Also add the option to visualize the cell_params grid side-by-side with the PP.grid plot. Make it so it is still possible to get a visualization of only the states grid, even when some parameters are set to evolve. This could be done by checking the elements in cell_params inside of the visualization function. Because of how the evolve function works, calling visualize before evolve should only show the states grid and calling visualize after evolve should show the state grid and all cell_params grids set to evolve.
+
+In the run function, check whether the entries in the cell_params arrays align with the states in the grid. Add documentation to the update function to mention that these functions assume the the cell_params arrays are algined with the grid.
+
+### output
+Made large changes to multiple functions. See git commit for details.
+
 
 ### Mean Field class
 
