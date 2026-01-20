@@ -570,3 +570,7 @@ Made large changes to multiple functions. See git commit for details.
 
 
 1. Create a comprehensive testing suite for the CA and PP classes. Test initialization, async update changes, synchronous update changes, prey growth in isolation behavior, predator starvation, parameter evolution and long run dynamics. Also make sur ethe test_viz mehtod works as desired
+
+2. Run a parameter sweep on the PP model and produce a heatmap of predator vs. pred birth rate to identify range of interest for our visualizations.
+
+3. 
