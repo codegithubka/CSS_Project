@@ -31,7 +31,7 @@ def main():
 
     # Start interactive visualization: update every 10 iterations
     # Do not show neighbor histogram/percentile plots to reduce overhead
-    pp.visualize(interval=10, figsize=(12, 8), pause=0.1, show_cell_params=True, show_neighbors=False)
+    pp.visualize(interval=10, figsize=(12, 8), pause=0.1, show_cell_params=True, show_neighbors=True)
 
     # Run the simulation (ensure the plot stays open afterwards)
     try:
