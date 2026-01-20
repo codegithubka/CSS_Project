@@ -545,6 +545,9 @@ In the run function, check whether the entries in the cell_params arrays align w
 ### output
 Made large changes to multiple functions. See git commit for details.
 
+### changes
+Added color bars to the evolving parameters plots.
+
 ## CA and PP tests
 Now that the MVP functionality is fulfilled, we need to test it. For this, we create numerous tests for both the CA class and the PP class, testing if incorrect arguments raise the correct errors, if any functions raise unwanted errors, but mostly if the update functions work as intended.
 
@@ -661,6 +664,16 @@ def test_predators_dominate_with_high_birth_and_zero_predator_death():
 
 ### changes
 Revealed and fixed error in the PP class' update functions where no parameter key was passed to the _process_reproduction function, resulting in an error.
+
+## More visualizations
+Now that we can run simulations, we need to understand what is happening. For this, we first need graphs detailing the population counts as well as the min, mean, and max values of each evolving parameter. Additionally, we need to add functionality that stops mutation after a certain amount of steps, after which we can see which parameter values survive and which go extinct.
+
+### prompt
+Add graphs underneath the imshow plots to show the simulation state over time. For the states grid, show the population count of the prey and predator over time. For the evolving parameters, show the min, mean, and max value of that parameter over time. Only measure these values when the figure is updated, to make sure it only adds overhead every interval iterations.
+
+Also create a separate plot left of the states grid plot that shows the distribution of prey neighbors for each prey. I want a histogram showing the amount of prey with each possible prey neighbor count (for moore this is 8). Below that, add a graph showing the 25%, the mean, and the 75% value for the neighbor count.
+
+Lastly, add functionality to stop evolution after a certain time-step. This should be an optional argument to the run function. Also add a function to create snapshots of the histogram, states grid, and cell parameters grids. As these are snapshots, the graphs below these plots should not be included. Add another argument to the run function, which is a list of the iterations to create snapshots at. Save these snapshots to the results folder, where each run should have its own folder with snapshots. Make sure the snapshot file names include the iteration.
 
 ### Mean Field class
 
