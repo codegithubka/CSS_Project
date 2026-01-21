@@ -99,20 +99,44 @@ class CA:
 		- tuple of np.ndarray: one array per species (state 1..n_species)
 		"""
 		counts = []
-		# Define neighbor shifts
-		if self.neighborhood == "neumann":
-			shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
-		else:  # moore
-			shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+		# Try using scipy.ndimage.convolve for fast neighbor counting with wrap (periodic)
+		# Fall back to roll-based implementation if SciPy is not available.
+		try:
+			from scipy import ndimage
+			use_convolve = True
+		except Exception:
+			use_convolve = False
 
-		for state in range(1, self.n_species + 1):
-			mask = (self.grid == state).astype(int)
-			neigh = np.zeros_like(mask)
-			for dr, dc in shifts:
-				neigh += np.roll(np.roll(mask, shift=dr, axis=0), shift=dc, axis=1)
-			counts.append(neigh)
+		if use_convolve:
+			if self.neighborhood == "neumann":
+				# Neumann (4-neighbors)
+				kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=int)
+			else:
+				# Moore (8-neighbors)
+				kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=int)
 
-		return tuple(counts)
+			for state in range(1, self.n_species + 1):
+				mask = (self.grid == state).astype(int)
+				# ndimage.convolve with mode='wrap' implements periodic boundaries
+				neigh = ndimage.convolve(mask, kernel, mode='wrap')
+				counts.append(neigh)
+			return tuple(counts)
+		else:
+			# Fallback: roll-based neighbor counting (works but slower)
+			# Define neighbor shifts
+			if self.neighborhood == "neumann":
+				shifts = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+			else:  # moore
+				shifts = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+
+			for state in range(1, self.n_species + 1):
+				mask = (self.grid == state).astype(int)
+				neigh = np.zeros_like(mask)
+				for dr, dc in shifts:
+					neigh += np.roll(np.roll(mask, shift=dr, axis=0), shift=dc, axis=1)
+				counts.append(neigh)
+
+			return tuple(counts)
 
 	def update(self) -> None:
 		"""Perform one update step.
@@ -125,7 +149,7 @@ class CA:
 		"""
 		raise NotImplementedError("Override update() in a subclass to define CA dynamics")
 
-	def run(self, steps: int) -> None:
+	def run(self, steps: int, stop_evolution_at: Optional[int] = None, snapshot_iters: Optional[list] = None) -> None:
 		"""Run the CA for a number of steps.
 
 		Args:
@@ -156,6 +180,9 @@ class CA:
 					if not np.array_equal(nonnan, expected):
 						raise ValueError(f"cell_params['{pname}'] non-NaN entries must match positions of species {species} in the grid")
 
+		# normalize snapshot iteration list
+		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
+
 		for i in range(steps):
 			self.update()
 			# Update visualization if enabled every `interval` iterations
@@ -167,6 +194,30 @@ class CA:
 					# Don't let visualization errors stop the simulation
 					pass
 
+			# create snapshots if requested at this iteration
+			if (i + 1) in snapshot_set:
+				try:
+					# create snapshot folder if not present
+					if not hasattr(self, "_viz_snapshot_dir") or self._viz_snapshot_dir is None:
+						import os, time
+
+						base = "results"
+						ts = int(time.time())
+						run_folder = f"run-{ts}"
+						full = os.path.join(base, run_folder)
+						os.makedirs(full, exist_ok=True)
+						self._viz_snapshot_dir = full
+					self._viz_save_snapshot(i + 1)
+				except Exception:
+					pass
+
+			# stop evolution at specified time-step (disable further evolution)
+			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
+				try:
+					self._evolve_info = {}
+				except Exception:
+					pass
+
 	def visualize(
 		self,
 		interval: int = 1,
@@ -174,6 +225,7 @@ class CA:
 		pause: float = 0.001,
 		cmap=None,
 		show_cell_params: bool = False,
+		show_neighbors: bool = True,
 	) -> None:
 		"""Enable interactive visualization of the grid.
 
@@ -221,90 +273,466 @@ class CA:
 					param_keys.append(k)
 
 		n_extra = len(param_arrays)
-		if n_extra == 0:
-			fig, ax = plt.subplots(figsize=figsize)
-			im = ax.imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
-			ax.set_title("States: Iteration 0")
-			axes = [ax]
-			ims = [im]
+
+		# Layout with GridSpec. We do NOT reserve separate GridSpec columns for
+		# colorbars — colorbars are created next to image axes via
+		# make_axes_locatable so they remain narrow and do not force a large
+		# reserved column in the GridSpec.
+		if show_neighbors:
+			# histogram + states + one column per param image
+			total_cols = 2 + n_extra
 		else:
-			# create side-by-side plots: states + one per-param
-			fig, axes = plt.subplots(1, 1 + n_extra, figsize=(figsize[0] * (1 + n_extra), figsize[1]))
-			# normalize axes to a list for consistent indexing
-			if not isinstance(axes, (list, tuple, np.ndarray)):
-				axes = [axes]
+			# states + one column per param image
+			total_cols = 1 + n_extra
+		rows = 2
+		width_ratios = [1.0] * total_cols
+		height_ratios = [3.0, 2.0]
+		# Use the total `figsize` passed by the caller as the full figure size
+		fig = plt.figure(figsize=figsize, constrained_layout=True)
+		gs = fig.add_gridspec(nrows=rows, ncols=total_cols, width_ratios=width_ratios, height_ratios=height_ratios)
+
+		# top row and bottom row axes depend on whether neighbor plots are shown
+		ax_params = []
+		# colorbar axes are created dynamically for each param via make_axes_locatable
+		ax_cbars = []
+		ax_param_ts = []
+		if show_neighbors:
+			# top row: histogram, states, param images + colorbars
+			ax_hist = fig.add_subplot(gs[0, 0])
+			ax_states = fig.add_subplot(gs[0, 1])
+			for i in range(n_extra):
+				col_img = 2 + i
+				ax_params.append(fig.add_subplot(gs[0, col_img]))
+
+			# bottom row: percentiles, states time-series, param stats (under each param image)
+			ax_percentiles = fig.add_subplot(gs[1, 0])
+			ax_state_ts = fig.add_subplot(gs[1, 1])
+			for i in range(n_extra):
+				col_img = 2 + i
+				ax_param_ts.append(fig.add_subplot(gs[1, col_img]))
+		else:
+			# top row: states in first column, then param images + colorbars
+			ax_hist = None
+			ax_percentiles = None
+			ax_states = fig.add_subplot(gs[0, 0])
+			for i in range(n_extra):
+				col_img = 1 + i
+				ax_params.append(fig.add_subplot(gs[0, col_img]))
+
+			# bottom row: states time-series under states, param stats under param images
+			ax_state_ts = fig.add_subplot(gs[1, 0])
+			for i in range(n_extra):
+				col_img = 1 + i
+				ax_param_ts.append(fig.add_subplot(gs[1, col_img]))
+
+		# determine downsampling factor for display to limit pixels drawn
+		rows, cols = self.grid.shape
+		_max_display = 300
+		_ds = max(1, int(max(rows, cols) / _max_display))
+		# initialize histogram: compute neighbor counts for prey
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
+		counts = self.count_neighbors()[0]
+		prey_pos = (self.grid == 1)
+		if show_neighbors:
+			if np.any(prey_pos):
+				vals = counts[prey_pos]
 			else:
-				try:
-					axes = list(np.array(axes).flatten())
-				except Exception:
-					axes = list(axes)
-			# first axis: states
-			im0 = axes[0].imshow(self.grid, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
-			axes[0].set_title("States: Iteration 0")
-			ims = [im0]
-			# other axes: parameter arrays
-			for i, arr in enumerate(param_arrays, start=1):
-				axp = axes[i]
-				# use a continuous cmap for parameter values
+				vals = np.array([], dtype=int)
+			bins = np.arange(n_neighbors + 1)
+			hist_vals = np.bincount(vals, minlength=n_neighbors + 1)
+			bars = ax_hist.bar(bins, hist_vals, align='center')
+			ax_hist.set_xlabel('Prey neighbor count')
+			ax_hist.set_ylabel('Number of prey')
+		else:
+			bars = []
+
+		# states image (downsampled for display)
+		grid_disp = self.grid[::_ds, ::_ds]
+		im_states = ax_states.imshow(grid_disp, cmap=cmap_obj, interpolation="nearest", vmin=0, vmax=self.n_species)
+		ax_states.set_title('States grid')
+		fig.suptitle('Iteration 0')
+
+		# param images (place colorbars in reserved axes)
+		param_imps = []
+		param_cbs = []
+		from mpl_toolkits.axes_grid1 import make_axes_locatable
+		for i, arr in enumerate(param_arrays):
+			axp = ax_params[i]
+			key = param_keys[i]
+			# If this parameter is evolving, use the evolve metadata min/max to
+			# fix the colorbar range so it never needs updating at runtime.
+			if hasattr(self, "_evolve_info") and key in self._evolve_info:
+				meta = self._evolve_info.get(key, {})
+				vmin = float(meta.get("min", 0.0))
+				vmax = float(meta.get("max", 1.0))
+			else:
 				vmin = float(np.nanmin(arr)) if np.isfinite(np.nanmin(arr)) else 0.0
 				vmax = float(np.nanmax(arr)) if np.isfinite(np.nanmax(arr)) else 1.0
-				imp = axp.imshow(arr, cmap=plt.get_cmap("viridis"), interpolation="nearest", vmin=vmin, vmax=vmax)
-				axp.set_title(f"{param_keys[i-1]}: Iteration 0")
-				ims.append(imp)
+			# downsample param image for display
+			if arr is None:
+				arr_disp = np.full((rows // _ds + (1 if rows % _ds else 0), cols // _ds + (1 if cols % _ds else 0)), np.nan)
+			else:
+				arr_disp = arr[::_ds, ::_ds]
+			imp = axp.imshow(arr_disp, cmap=plt.get_cmap("viridis"), interpolation="nearest", vmin=vmin, vmax=vmax)
+			title = key.replace('_', ' ').title()
+			if 'Death' in title or 'death' in key:
+				title = title + ' Rate'
+			axp.set_title(title)
+			# colorbar placed in dedicated axis
+			# create a narrow colorbar axis to the right of the image
+			try:
+				divider = make_axes_locatable(axp)
+				cb_ax = divider.append_axes("right", size="5%", pad=0.05)
+				cb = fig.colorbar(imp, cax=cb_ax, orientation='vertical')
+			except Exception:
+				# fallback to default behavior if axes divider unavailable
+				cb = fig.colorbar(imp)
+			param_imps.append(imp)
+			param_cbs.append(cb)
+
+		# setup time-series plots (empty at start)
+		time_x = []
+		prey_ts = []
+		pred_ts = []
+		# match colors to the states colormap: state values map between 0..n_species
+		try:
+			prey_color = cmap_obj(1.0 / max(1, self.n_species))
+		except Exception:
+			prey_color = 'green'
+		try:
+			pred_color = cmap_obj(2.0 / max(1, self.n_species))
+		except Exception:
+			pred_color = 'red'
+		line_prey, = ax_state_ts.plot([], [], label='Prey', color=prey_color)
+		line_pred, = ax_state_ts.plot([], [], label='Predator', color=pred_color)
+		ax_state_ts.set_xlabel('Iteration')
+		ax_state_ts.set_ylabel('Count')
+		ax_state_ts.legend()
+		# initialize sensible x/y limits to avoid autoscale on first updates
+		ax_state_ts.set_xlim(0, 1)
+		ax_state_ts.set_ylim(0, rows * cols)
+
+		# percentiles plot (only mean when enabled)
+		perc_x = []
+		perc_mean = []
+		# define placeholders so later code can always unpack perc_lines
+		line_25 = None
+		line_mean = None
+		line_75 = None
+		if show_neighbors:
+			line_mean, = ax_percentiles.plot([], [], label='Mean')
+			ax_percentiles.set_xlabel('Iteration')
+			ax_percentiles.set_ylabel('Neighbor count')
+			ax_percentiles.legend()
+		# initialize percentiles xlim/ylim (only when axis exists)
+		if ax_percentiles is not None:
+			ax_percentiles.set_xlim(0, 1)
+			ax_percentiles.set_ylim(0, n_neighbors)
+
+		# param stats plots: for each param, three lines
+		param_stat_lines = {}
+		for i, key in enumerate(param_keys):
+			ax = ax_param_ts[i]
+			# choose colors for min/mean/max based on the param colormap range
+			cmap_param = plt.get_cmap("viridis")
+			if hasattr(self, "_evolve_info") and key in self._evolve_info:
+				meta = self._evolve_info.get(key, {})
+				# map min->0.0, mean->0.5, max->1.0 on the colormap
+				c_min = cmap_param(0.0)
+				c_mean = cmap_param(0.5)
+				c_max = cmap_param(1.0)
+			else:
+				c_min = cmap_param(0.0)
+				c_mean = cmap_param(0.5)
+				c_max = cmap_param(1.0)
+			lmin, = ax.plot([], [], label='min', color=c_min, linewidth=1.25)
+			lmean, = ax.plot([], [], label='mean', color=c_mean, linewidth=1.5)
+			lmax, = ax.plot([], [], label='max', color=c_max, linewidth=1.25)
+			ax.set_xlabel('Iteration')
+			ax.set_ylabel(key)
+			ax.legend()
+			param_stat_lines[key] = (lmin, lmean, lmax)
+			# initialize xlim and y limits for param time-series
+			ax.set_xlim(0, 1)
+			# if we have evolve metadata, use its min/max for y-limits
+			if hasattr(self, "_evolve_info") and key in self._evolve_info:
+				meta = self._evolve_info.get(key, {})
+				ax.set_ylim(float(meta.get('min', 0.0)), float(meta.get('max', 1.0)))
+			else:
+				ax.set_ylim(0.0, 1.0)
+
+		# use constrained layout already; ensure spacing
+		# constrained_layout=True used on figure to manage spacing
+
+		# store viz objects
+		self._viz_on = True
+		self._viz_interval = interval
+		self._viz_fig = fig
+		self._viz_axes = {
+			"hist": ax_hist,
+			"percentiles": ax_percentiles,
+			"states": ax_states,
+			"state_ts": ax_state_ts,
+			"param_imgs": ax_params,
+			"param_ts": ax_param_ts,
+		}
+		self._viz_art = {
+			"im_states": im_states,
+			"param_imps": param_imps,
+			"param_cbs": param_cbs,
+			"hist_bars": bars,
+			"state_lines": (line_prey, line_pred),
+			"perc_lines": (line_25, line_mean, line_75),
+			"param_stat_lines": param_stat_lines,
+		}
+		self._viz_time = []
+		self._viz_prey_counts = []
+		self._viz_pred_counts = []
+		self._viz_param_stats = {k: {"min": [], "mean": [], "max": []} for k in param_keys}
+		self._viz_neighbor_stats = {"25": [], "mean": [], "75": []}
+		self._viz_param_keys = param_keys
+		self._viz_pause = float(pause)
+		self._viz_cmap = cmap_obj
+		self._viz_snapshot_dir = None
 
 		plt.show(block=False)
+		# draw once to populate the renderer
 		fig.canvas.draw()
 		plt.pause(pause)
+
+		# Blit setup: copy background after the first draw if supported
+		canvas = fig.canvas
+		can_blit = hasattr(canvas, "copy_from_bbox") and hasattr(canvas, "blit")
+		if can_blit:
+			try:
+				bg = canvas.copy_from_bbox(fig.bbox)
+				self._viz_blit = True
+				self._viz_background = bg
+			except Exception:
+				self._viz_blit = False
+		else:
+			self._viz_blit = False
 
 		# Store visualization state on the instance (only when visualization enabled)
 		self._viz_on = True
 		self._viz_interval = interval
 		self._viz_fig = fig
-		self._viz_axes = axes
-		self._viz_ims = ims
-		self._viz_param_keys = param_keys
-		self._viz_cmap = cmap_obj
 		self._viz_pause = float(pause)
+		self._viz_cmap = cmap_obj
+		self._viz_axes = {
+			"hist": ax_hist,
+			"percentiles": ax_percentiles,
+			"states": ax_states,
+			"state_ts": ax_state_ts,
+			"param_imgs": ax_params,
+			"param_ts": ax_param_ts,
+		}
+		self._viz_art = {
+			"im_states": im_states,
+			"param_imps": param_imps,
+			"param_cbs": param_cbs,
+			"hist_bars": bars,
+			"state_lines": (line_prey, line_pred),
+			"perc_lines": (line_25, line_mean, line_75),
+			"param_stat_lines": param_stat_lines,
+		}
+		self._viz_time = []
+		self._viz_prey_counts = []
+		self._viz_pred_counts = []
+		self._viz_param_stats = {k: {"min": [], "mean": [], "max": []} for k in param_keys}
+		self._viz_neighbor_stats = {"25": [], "mean": [], "75": []}
+		self._viz_param_keys = param_keys
+		self._viz_snapshot_dir = None
+		self._viz_ds = _ds
 
 	def _viz_update(self, iteration: int) -> None:
 		"""Update the interactive plot if the configured interval has passed.
 
-		This function also performs the minimal redraw using `plt.pause` so the
-		plot remains responsive.
+		This function updates images, histograms and time-series only every
+		the configured interval to reduce overhead.
 		"""
 		if not getattr(self, "_viz_on", False):
 			return
 		if (iteration % int(self._viz_interval)) != 0:
 			return
 
-		# Lazy import for pause; matplotlib already imported in visualize
 		import matplotlib.pyplot as plt
 
-		# update states grid
-		if hasattr(self, "_viz_ims") and len(self._viz_ims) > 0:
-			# first image is states
-			self._viz_ims[0].set_data(self.grid)
-			self._viz_axes[0].set_title(f"States: Iteration {iteration}")
-			# update param images if any
-			for i in range(1, len(self._viz_ims)):
-				key = self._viz_param_keys[i-1]
-				arr = self.cell_params.get(key)
+		# update figure title
+		try:
+			self._viz_fig.suptitle(f"Iteration {iteration}")
+		except Exception:
+			pass
+
+		# update states image (use downsampled display array)
+		art = getattr(self, "_viz_art", None)
+		if art is None:
+			return
+		im_states = art.get("im_states")
+		_ds = getattr(self, "_viz_ds", 1)
+		if im_states is not None:
+			im_states.set_data(self.grid[::_ds, ::_ds])
+
+		# update histogram of prey neighbor counts
+		counts = self.count_neighbors()[0]
+		prey_mask = (self.grid == 1)
+		if np.any(prey_mask):
+			vals = counts[prey_mask]
+		else:
+			vals = np.array([], dtype=int)
+		nn = 4 if self.neighborhood == "neumann" else 8
+		hist_vals = np.bincount(vals, minlength=nn + 1)
+		bars = art.get("hist_bars")
+		if bars is not None:
+			for rect, h in zip(bars, hist_vals):
+				rect.set_height(h)
+
+		# compute percentiles
+		if vals.size > 0:
+			p25 = float(np.percentile(vals, 25))
+			pmean = float(np.mean(vals))
+			p75 = float(np.percentile(vals, 75))
+		else:
+			p25 = pmean = p75 = 0.0
+
+		# update time series data (append)
+		self._viz_time.append(iteration)
+		prey_count = int(np.count_nonzero(self.grid == 1))
+		pred_count = int(np.count_nonzero(self.grid == 2))
+		self._viz_prey_counts.append(prey_count)
+		self._viz_pred_counts.append(pred_count)
+		self._viz_neighbor_stats["25"].append(p25)
+		self._viz_neighbor_stats["mean"].append(pmean)
+		self._viz_neighbor_stats["75"].append(p75)
+
+		# update state time-series lines (do not autoscale; update xlim incrementally)
+		line_prey, line_pred = art.get("state_lines", (None, None))
+		if line_prey is not None:
+			line_prey.set_data(self._viz_time, self._viz_prey_counts)
+		if line_pred is not None:
+			line_pred.set_data(self._viz_time, self._viz_pred_counts)
+		# adjust xlim/ylim incrementally to avoid per-frame relim
+		if len(self._viz_time) > 0:
+			ax = self._viz_axes["state_ts"]
+			cur_xmax = ax.get_xlim()[1]
+			if iteration > cur_xmax:
+				ax.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
+			# ensure some padding for y
+			ymax = max(max(self._viz_prey_counts or [0]), max(self._viz_pred_counts or [0]), 1)
+			ax.set_ylim(0, ymax * 1.1)
+
+		# update percentiles plot (avoid autoscale)
+		l25, lmean, l75 = art.get("perc_lines", (None, None, None))
+		if l25 is not None:
+			l25.set_data(self._viz_time, self._viz_neighbor_stats["25"])
+		if lmean is not None:
+			lmean.set_data(self._viz_time, self._viz_neighbor_stats["mean"])
+		if l75 is not None:
+			l75.set_data(self._viz_time, self._viz_neighbor_stats["75"])
+		# keep fixed y-limits for percentiles (if axis exists)
+		if len(self._viz_time) > 0:
+			axp = self._viz_axes.get("percentiles")
+			if axp is not None:
+				axp.set_ylim(0, nn)
+				# expand xlim incrementally
+				cur_xmax = axp.get_xlim()[1]
+				if iteration > cur_xmax:
+					axp.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
+
+		# update param images and stats
+		for idx, key in enumerate(self._viz_param_keys):
+			arr = self.cell_params.get(key)
+			im = None
+			try:
+				im = art["param_imps"][idx]
+			except Exception:
+				im = None
+			if im is not None:
 				if arr is None:
-					# blank out with NaNs
 					arr = np.full(self.grid.shape, np.nan)
-				self._viz_ims[i].set_data(arr)
-				# adjust color scaling if possible
+				# update downsampled display array only
+				_ds = getattr(self, "_viz_ds", 1)
+				im.set_data(arr[::_ds, ::_ds])
+				# do not call colorbar update here (vmin/vmax fixed)
+				# compute stats for plotting in param_ts (cheap)
 				try:
-					vmin = float(np.nanmin(arr))
-					vmax = float(np.nanmax(arr))
-					if vmin < vmax:
-						self._viz_ims[i].set_clim(vmin=vmin, vmax=vmax)
+					flat = arr[~np.isnan(arr)]
+					if flat.size > 0:
+						mn = float(np.nanmin(flat))
+						mx = float(np.nanmax(flat))
+						md = float(np.nanmean(flat))
+					else:
+						mn = md = mx = 0.0
+				except Exception:
+					mn = md = mx = 0.0
+				self._viz_param_stats[key]["min"].append(mn)
+				self._viz_param_stats[key]["mean"].append(md)
+				self._viz_param_stats[key]["max"].append(mx)
+				# update stat lines without autoscaling; expand xlim incrementally
+				lmin, lmean, lmax = art["param_stat_lines"].get(key, (None, None, None))
+				if lmin is not None:
+					lmin.set_data(self._viz_time, self._viz_param_stats[key]["min"])
+				if lmean is not None:
+					lmean.set_data(self._viz_time, self._viz_param_stats[key]["mean"])
+				if lmax is not None:
+					lmax.set_data(self._viz_time, self._viz_param_stats[key]["max"])
+				# expand x-axis for this param's time-series
+				axp = self._viz_axes["param_ts"][idx]
+				cur_xmax = axp.get_xlim()[1]
+				if iteration > cur_xmax:
+					axp.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
+
+		# redraw using blitting if available (avoid full-figure draw)
+		canvas = self._viz_fig.canvas
+		if getattr(self, "_viz_blit", False):
+			try:
+				# restore background and draw only updated artists
+				canvas.restore_region(self._viz_background)
+				# draw image artists and lines
+				# states image
+				if im_states is not None:
+					self._viz_axes["states"].draw_artist(im_states)
+				# param images
+				for im in art.get("param_imps", []):
+					if im is not None:
+						im.axes.draw_artist(im)
+				# histogram bars
+				for rect in art.get("hist_bars", []):
+					rect.axes.draw_artist(rect)
+				# state lines
+				for ln in art.get("state_lines", ()): 
+					if ln is not None:
+						ln.axes.draw_artist(ln)
+				# percentile lines
+				for ln in art.get("perc_lines", ()): 
+					if ln is not None:
+						ln.axes.draw_artist(ln)
+				# param stat lines
+				for key in art.get("param_stat_lines", {}):
+					for ln in art["param_stat_lines"][key]:
+						if ln is not None:
+							ln.axes.draw_artist(ln)
+
+				# blit to the screen
+				canvas.blit(self._viz_fig.bbox)
+			except Exception:
+				# fallback to full draw on error
+				try:
+					self._viz_fig.canvas.draw()
 				except Exception:
 					pass
-
-		# draw/update
-		self._viz_fig.canvas.draw_idle()
-		plt.pause(self._viz_pause)
+			# small pause to let GUI update
+			plt.pause(self._viz_pause)
+		else:
+			# fallback: full draw
+			try:
+				self._viz_fig.canvas.draw()
+			except Exception:
+				try:
+					self._viz_fig.canvas.draw_idle()
+				except Exception:
+					pass
+			plt.pause(self._viz_pause)
 
 
 class PP(CA):
@@ -592,11 +1020,11 @@ class PP(CA):
 
 		# Prey reproduce into empty cells (target state 0 -> new state 1)
 		prey_sources = np.argwhere(grid_ref == 1)
-		_process_reproduction(prey_sources, self.params["prey_birth"], 0, 1)
+		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
 
 		# Predators reproduce into prey cells (target state 1 -> new state 2)
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_reproduction(pred_sources, self.params["predator_birth"], 1, 2)
+		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
 		"""Asynchronous (random-sequential) update.
