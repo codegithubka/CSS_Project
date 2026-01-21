@@ -737,7 +737,6 @@ class CA:
 
 class PP(CA):
 	"""Predator-prey CA.
-
 	States: 0 = empty, 1 = prey, 2 = predator
 
 	Parameters (in `params` dict). Allowed keys and defaults:
