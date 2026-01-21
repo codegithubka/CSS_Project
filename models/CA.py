@@ -286,11 +286,7 @@ class CA:
 			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
 				# mark evolution as stopped; do not erase evolve metadata so
 				# deterministic inheritance can still use parent values
-				try:
-					self._evolution_stopped = True
-				except Exception:
-					# best-effort: ignore if attribute cannot be set
-					pass
+				self._evolution_stopped = True
 
 	def visualize(
 		self,
