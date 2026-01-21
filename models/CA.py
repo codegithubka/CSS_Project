@@ -50,26 +50,6 @@ class CA:
 	def n_species(self) -> int:
 		return int(getattr(self, "_n_species"))
 
-	def validate(self) -> None:
-		"""Validate core CA invariants.
-
-		Checks that `neighborhood` is valid, that `self.grid` has the
-	texpected shape `(rows, cols)`, and that any numpy arrays in
-	`self.cell_params` have matching shapes. Raises `ValueError` on
-	validation failure.
-		"""
-		if self.neighborhood not in ("neumann", "moore"):
-			raise ValueError("neighborhood must be 'neumann' or 'moore'")
-
-		expected_shape = (int(getattr(self, "_rows")), int(getattr(self, "_cols")))
-		if self.grid.shape != expected_shape:
-			raise ValueError(f"grid shape {self.grid.shape} does not match expected {expected_shape}")
-
-		# Ensure any array in cell_params matches grid shape
-		for k, v in (self.cell_params or {}).items():
-			if isinstance(v, np.ndarray) and v.shape != expected_shape:
-				raise ValueError(f"cell_params['{k}'] must have shape equal to grid")
-
 	def __init__(
 		self,
 		rows: int,
@@ -113,6 +93,16 @@ class CA:
 		self._densities: Tuple[float, ...] = tuple(densities)
 		self.params: Dict[str, object] = dict(params) if params is not None else {}
 		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
+
+		# per-parameter evolve metadata and evolution state
+		# maps parameter name -> dict with keys 'sd','min','max','species'
+		self._evolve_info: Dict[str, Dict[str, float]] = {}
+		# when True, inheritance uses deterministic copy from parent (no mutation)
+		self._evolution_stopped: bool = False
+
+		# human-readable species names (useful for visualization). Default
+		# generates generic names based on n_species; subclasses may override.
+		self.species_names: Tuple[str, ...] = tuple(f"species{i+1}" for i in range(self._n_species))
 		self.neighborhood: str = neighborhood
 		self.generator: np.random.Generator = np.random.default_rng(seed)
 
@@ -136,6 +126,67 @@ class CA:
 			c = chosen % cols
 			self.grid[r, c] = i + 1
 
+	def validate(self) -> None:
+		"""Validate core CA invariants.
+
+		Checks that `neighborhood` is valid, that `self.grid` has the
+	texpected shape `(rows, cols)`, and that any numpy arrays in
+	`self.cell_params` have matching shapes. Raises `ValueError` on
+	validation failure.
+		"""
+		if self.neighborhood not in ("neumann", "moore"):
+			raise ValueError("neighborhood must be 'neumann' or 'moore'")
+
+		expected_shape = (int(getattr(self, "_rows")), int(getattr(self, "_cols")))
+		if self.grid.shape != expected_shape:
+			raise ValueError(f"grid shape {self.grid.shape} does not match expected {expected_shape}")
+
+		# Ensure any array in cell_params matches grid shape
+		for k, v in (self.cell_params or {}).items():
+			if isinstance(v, np.ndarray) and v.shape != expected_shape:
+				raise ValueError(f"cell_params['{k}'] must have shape equal to grid")
+
+	def _infer_species_from_param_name(self, param_name: str) -> Optional[int]:
+		"""Infer species index (1-based) from a parameter name using `species_names`.
+
+		Returns the 1-based species index if a matching prefix is found,
+		otherwise `None`.
+		"""
+		if not isinstance(param_name, str):
+			return None
+		for idx, name in enumerate(self.species_names or ()):  # type: ignore
+			if isinstance(name, str) and param_name.startswith(f"{name}_"):
+				return idx + 1
+		return None
+
+	def evolve(self, param: str, species: Optional[int] = None, sd: float = 0.05, min_val: Optional[float] = None, max_val: Optional[float] = None) -> None:
+		"""Enable per-cell evolution for `param` on `species`.
+
+		If `species` is None, attempt to infer the species using
+		`_infer_species_from_param_name(param)` which matches against
+		`self.species_names`. This keeps `CA` free of domain-specific
+		(predator/prey) logic while preserving backward compatibility when
+		subclasses set `species_names` (e.g. `('prey','predator')`).
+		"""
+		if min_val is None:
+			min_val = 0.01
+		if max_val is None:
+			max_val = 0.99
+		if param not in self.params:
+			raise ValueError(f"Unknown parameter '{param}'")
+		if species is None:
+			species = self._infer_species_from_param_name(param)
+			if species is None:
+				raise ValueError("species must be provided or inferable from param name and species_names")
+		if not isinstance(species, int) or species <= 0 or species > self._n_species:
+			raise ValueError("species must be an integer between 1 and n_species")
+
+		arr = np.full(self.grid.shape, np.nan, dtype=float)
+		mask = (self.grid == int(species))
+		arr[mask] = float(self.params[param])
+		self.cell_params[param] = arr
+		self._evolve_info[param] = {"sd": float(sd), "min": float(min_val), "max": float(max_val), "species": int(species)}
+			
 	def count_neighbors(self) -> Tuple[np.ndarray, ...]:
 		"""Count neighbors for each non-zero state.
 
@@ -200,14 +251,6 @@ class CA:
 		"""
 		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
 
-		# NOTE: validation of `cell_params` and evolved parameters has been
-		# moved to the `validate()` method on the class. The run loop no
-		# longer performs per-cell validation for performance; call
-		# `validate()` explicitly when needed.
-
-		# normalize snapshot iteration list
-		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
-
 		# normalize snapshot iteration list
 		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
 
@@ -241,31 +284,12 @@ class CA:
 
 			# stop evolution at specified time-step (disable further evolution)
 			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
-				# disable further evolution
-				self._evolve_info = {}
-
-			# create snapshots if requested at this iteration
-			if (i + 1) in snapshot_set:
+				# mark evolution as stopped; do not erase evolve metadata so
+				# deterministic inheritance can still use parent values
 				try:
-					# create snapshot folder if not present
-					if not hasattr(self, "_viz_snapshot_dir") or self._viz_snapshot_dir is None:
-						import os, time
-
-						base = "results"
-						ts = int(time.time())
-						run_folder = f"run-{ts}"
-						full = os.path.join(base, run_folder)
-						os.makedirs(full, exist_ok=True)
-						self._viz_snapshot_dir = full
-					self._viz_save_snapshot(i + 1)
+					self._evolution_stopped = True
 				except Exception:
-					pass
-
-			# stop evolution at specified time-step (disable further evolution)
-			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
-				try:
-					self._evolve_info = {}
-				except Exception:
+					# best-effort: ignore if attribute cannot be set
 					pass
 
 	def visualize(
@@ -859,51 +883,11 @@ class PP(CA):
 		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
 
 		self.synchronous: bool = bool(synchronous)
-
-		# Information about which parameters are being evolved and their mutation specs
-		# Maps parameter name -> dict with keys: 'sd', 'min', 'max'
-		self._evolve_info: Dict[str, Dict[str, float]] = {}
+		# set human-friendly species names for PP
+		self.species_names = ("prey", "predator")
 
 
-	def evolve(self, param: str, sd: float = 0.05, min_val: Optional[float] = None, max_val: Optional[float] = None) -> None:
-		"""Enable per-cell evolution for a given parameter.
-
-		Creates a per-cell array in `self.cell_params[param]` with the same
-		shape as the grid. Cells currently occupied by the relevant species are
-		initialized to the global value in `self.params[param]`; other cells are
-		set to NaN. Mutation metadata (sd, min, max) are stored in
-		`self._evolve_info[param]`.
-
-		Args:
-		- param: one of the keys in `self.params` (e.g. 'prey_death')
-		- sd: standard deviation for Gaussian mutations
-		- min: minimum clipped value after mutation
-		- max: maximum clipped value after mutation
-		"""
-		# Note: deprecated keyword names `min` and `max` have been removed.
-		# Callers must use `min_val` and `max_val` explicitly.
-		# Provide sensible defaults when not specified
-		if min_val is None:
-			min_val = 0.01
-		if max_val is None:
-			max_val = 0.99
-		if param not in self.params:
-			raise ValueError(f"Unknown parameter '{param}'")
-
-		# determine target species for this parameter
-		if param.startswith("prey_"):
-			species = 1
-		elif param.startswith("predator_"):
-			species = 2
-		else:
-			raise ValueError("Parameter must start with 'prey_' or 'predator_' to evolve")
-
-		# create per-cell float array with NaNs for non-relevant cells
-		arr = np.full(self.grid.shape, np.nan, dtype=float)
-		mask = (self.grid == species)
-		arr[mask] = float(self.params[param])
-		self.cell_params[param] = arr
-		self._evolve_info[param] = {"sd": float(sd), "min": float(min_val), "max": float(max_val)}
+	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
 
 	def validate(self) -> None:
 		"""Validate PP-specific invariants in addition to base CA checks.
@@ -932,8 +916,15 @@ class PP(CA):
 			# shape already checked in super().validate(), but be explicit
 			if arr.shape != self.grid.shape:
 				raise ValueError(f"cell_params['{pname}'] must match grid shape")
-			# expected non-NaN positions correspond to species in grid
-			species = 1 if pname.startswith("prey_") else 2
+			# expected non-NaN positions correspond to species stored in metadata
+			species = None
+			if isinstance(meta, dict) and "species" in meta:
+				species = int(meta.get("species"))
+			else:
+				# try to infer species from parameter name using species_names
+				species = self._infer_species_from_param_name(pname)
+				if species is None:
+					raise ValueError(f"cell_params['{pname}'] missing species metadata and could not infer from name")
 			nonnan = ~np.isnan(arr)
 			expected = (self.grid == species)
 			if not np.array_equal(nonnan, expected):
@@ -970,15 +961,23 @@ class PP(CA):
 		self.grid[pred_death_mask] = 0
 
 		# Clear per-cell parameters for dead individuals
-		for pname in self._evolve_info:
-			if pname.startswith("prey_"):
-				arr = self.cell_params.get(pname)
-				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
-					arr[prey_death_mask] = np.nan
-			elif pname.startswith("predator_"):
-				arr = self.cell_params.get(pname)
-				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
-					arr[pred_death_mask] = np.nan
+		for pname, meta in self._evolve_info.items():
+			# determine species from metadata or infer from name
+			species = None
+			if isinstance(meta, dict) and "species" in meta:
+				species = int(meta.get("species"))
+			else:
+				species = self._infer_species_from_param_name(pname)
+				if species is None:
+					# cannot determine species; skip clearing for safety
+					continue
+			arr = self.cell_params.get(pname)
+			if not (isinstance(arr, np.ndarray) and arr.shape == self.grid.shape):
+				continue
+			if species == 1:
+				arr[prey_death_mask] = np.nan
+			elif species == 2:
+				arr[pred_death_mask] = np.nan
 
 	def _neighbor_shifts(self) -> Tuple[np.ndarray, np.ndarray, int]:
 		"""Return neighbor shift arrays (dr_arr, dc_arr, n_shifts) for the configured neighborhood."""
@@ -1007,16 +1006,17 @@ class PP(CA):
 		an array of parent coordinates with same length.
 		"""
 		for pname, meta in self._evolve_info.items():
-			# determine species this parameter belongs to
-			if pname.startswith("prey_"):
-				target_species = 1
-			elif pname.startswith("predator_"):
-				target_species = 2
+			# determine species this parameter belongs to via metadata or inference
+			species = None
+			if isinstance(meta, dict) and "species" in meta:
+				species = int(meta.get("species"))
 			else:
-				continue
+				species = self._infer_species_from_param_name(pname)
+				if species is None:
+					raise ValueError(f"_evolve_info contains unexpected key '{pname}' without species metadata and could not infer")
 
 			# if new_state is not the species for this param, clear at targets
-			if new_state_val != target_species:
+			if new_state_val != species:
 				arr = self.cell_params.get(pname)
 				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
 					arr[chosen_rs, chosen_cs] = np.nan
@@ -1037,8 +1037,14 @@ class PP(CA):
 			sd = float(meta["sd"])
 			mn = float(meta["min"])
 			mx = float(meta["max"])
-			mut = parent_vals + self.generator.normal(0.0, sd, size=parent_vals.shape)
-			mut = np.clip(mut, mn, mx)
+			# If evolution has been stopped, inheritance is deterministic: copy
+			# parent values directly without Gaussian mutation so we can observe
+			# which parameter values survive.
+			if getattr(self, "_evolution_stopped", False):
+				mut = parent_vals.copy()
+			else:
+				mut = parent_vals + self.generator.normal(0.0, sd, size=parent_vals.shape)
+				mut = np.clip(mut, mn, mx)
 			# If an array exists but has wrong shape, raise an informative error
 			existing = self.cell_params.get(pname)
 			if isinstance(existing, np.ndarray) and existing.shape != self.grid.shape:
