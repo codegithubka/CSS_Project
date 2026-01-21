@@ -295,7 +295,7 @@ class CA:
 		pause: float = 0.001,
 		cmap=None,
 		show_cell_params: bool = False,
-		show_neighbors = False,
+		show_neighbors: bool = True,
 		downsample: Optional[int] = None,
 		) -> None:
 		"""Enable interactive visualization of the grid.
@@ -341,71 +341,7 @@ class CA:
 			cmap_obj = c_spec
 
 		plt.ion()
-		# Helper: resolve user-provided species selection (names or numbers)
-		def _resolve_species(sel):
-			# sel can be:
-			# - False/None -> no neighbor plots
-			# - True -> all species
-			# - int or str -> single species
-			# - sequence of ints/str -> those species
-			if sel is False or sel is None:
-				return []
-			if sel is True:
-				# return all species indices
-				return list(range(1, getattr(self, "n_species", 0) + 1))
-			# single int
-			if isinstance(sel, int):
-				return [sel]
-			# single string (species name)
-			if isinstance(sel, str):
-				names = getattr(self, "species_names", None)
-				if names and sel in names:
-					return [names.index(sel) + 1]
-				try:
-					return [int(sel)]
-				except Exception:
-					raise ValueError(f"Unknown species name: {sel}")
-			# sequence
-			try:
-				it = list(sel)
-			except Exception:
-				raise ValueError("show_neighbors must be bool, int, str, sequence, or None")
-			out = []
-			for item in it:
-				if isinstance(item, int):
-					out.append(item)
-				elif isinstance(item, str):
-					names = getattr(self, "species_names", None)
-					if names and item in names:
-						out.append(names.index(item) + 1)
-					else:
-						try:
-							out.append(int(item))
-						except Exception:
-							raise ValueError(f"Unknown species name: {item}")
-				else:
-					raise ValueError("show_neighbors may contain only ints or strings")
-			# ensure unique and maintain provided order
-			seen = set()
-			res = []
-			for v in out:
-				if v not in seen:
-					seen.add(v)
-					res.append(v)
-			return res
-
-			# ensure unique and maintain provided order
-			seen = set()
-			res = []
-			for v in out:
-				if v not in seen:
-					seen.add(v)
-					res.append(v)
-			return res
-
-		# Resolve which species the user wants to track/plot
-		species_to_plot = _resolve_species(show_neighbors)
-
+		# Determine whether to show any per-cell parameter arrays
 		param_arrays = []
 		param_keys = []
 		if show_cell_params and isinstance(self.cell_params, dict):
@@ -420,13 +356,16 @@ class CA:
 		# colorbars — colorbars are created next to image axes via
 		# make_axes_locatable so they remain narrow and do not force a large
 		# reserved column in the GridSpec.
-		# allow multiple histogram/percentile axes depending on species_to_plot
-		k_hist = len(species_to_plot)
-		# when no species requested, do not allocate histogram/percentile columns
-		total_cols = (k_hist + 1 + n_extra) if k_hist > 0 else (1 + n_extra)
+		if show_neighbors:
+			# histogram + states + one column per param image
+			total_cols = 2 + n_extra
+		else:
+			# states + one column per param image
+			total_cols = 1 + n_extra
 		rows = 2
 		width_ratios = [1.0] * total_cols
 		height_ratios = [3.0, 2.0]
+		# Use the total `figsize` passed by the caller as the full figure size
 		fig = plt.figure(figsize=figsize, constrained_layout=True)
 		gs = fig.add_gridspec(nrows=rows, ncols=total_cols, width_ratios=width_ratios, height_ratios=height_ratios)
 
@@ -435,27 +374,24 @@ class CA:
 		# colorbar axes are created dynamically for each param via make_axes_locatable
 		ax_cbars = []
 		ax_param_ts = []
-		ax_hist_list = []
-		ax_percentiles_list = []
-		if k_hist > 0:
-			# top row: one histogram per requested species, then states, then param images
-			for i in range(k_hist):
-				ax_hist_list.append(fig.add_subplot(gs[0, i]))
-			col_states = k_hist
-			ax_states = fig.add_subplot(gs[0, col_states])
+		if show_neighbors:
+			# top row: histogram, states, param images + colorbars
+			ax_hist = fig.add_subplot(gs[0, 0])
+			ax_states = fig.add_subplot(gs[0, 1])
 			for i in range(n_extra):
-				col_img = col_states + 1 + i
+				col_img = 2 + i
 				ax_params.append(fig.add_subplot(gs[0, col_img]))
 
-			# bottom row: percentiles per hist species, states time-series, param stats
-			for i in range(k_hist):
-				ax_percentiles_list.append(fig.add_subplot(gs[1, i]))
-			ax_state_ts = fig.add_subplot(gs[1, col_states])
+			# bottom row: percentiles, states time-series, param stats (under each param image)
+			ax_percentiles = fig.add_subplot(gs[1, 0])
+			ax_state_ts = fig.add_subplot(gs[1, 1])
 			for i in range(n_extra):
-				col_img = col_states + 1 + i
+				col_img = 2 + i
 				ax_param_ts.append(fig.add_subplot(gs[1, col_img]))
 		else:
 			# top row: states in first column, then param images + colorbars
+			ax_hist = None
+			ax_percentiles = None
 			ax_states = fig.add_subplot(gs[0, 0])
 			for i in range(n_extra):
 				col_img = 1 + i
@@ -477,34 +413,22 @@ class CA:
 			_ds = _ds_auto
 		else:
 			_ds = max(1, int(downsample))
-		# initialize histogram(s): compute neighbor counts for requested species
+		# initialize histogram: compute neighbor counts for prey
 		n_neighbors = 4 if self.neighborhood == "neumann" else 8
-		counts = self.count_neighbors()
-		bins = np.arange(n_neighbors + 1)
-		# build human-readable species names if available
-		names = getattr(self, "species_names", None)
-		def _species_label(idx):
-			if names and 1 <= idx <= len(names):
-				return names[idx - 1]
-			return f"Species {idx}"
-
-		hist_bars_all = []
-		if k_hist > 0:
-			for i, s_idx in enumerate(species_to_plot):
-				axh = ax_hist_list[i]
-				mask = (self.grid == s_idx)
-				if np.any(mask):
-					vals = counts[s_idx - 1][mask]
-				else:
-					vals = np.array([], dtype=int)
-				hv = np.bincount(vals, minlength=n_neighbors + 1)
-				bars_i = axh.bar(bins, hv, align='center')
-				lbl = _species_label(s_idx)
-				axh.set_xlabel(f"{lbl} neighbor count")
-				axh.set_ylabel(f"Number of {lbl}")
-				hist_bars_all.append(bars_i)
+		counts = self.count_neighbors()[0]
+		prey_pos = (self.grid == 1)
+		if show_neighbors:
+			if np.any(prey_pos):
+				vals = counts[prey_pos]
+			else:
+				vals = np.array([], dtype=int)
+			bins = np.arange(n_neighbors + 1)
+			hist_vals = np.bincount(vals, minlength=n_neighbors + 1)
+			bars = ax_hist.bar(bins, hist_vals, align='center')
+			ax_hist.set_xlabel('Prey neighbor count')
+			ax_hist.set_ylabel('Number of prey')
 		else:
-			hist_bars_all = []
+			bars = []
 
 		# states image (downsampled for display)
 		grid_disp = self.grid[::_ds, ::_ds]
@@ -534,9 +458,9 @@ class CA:
 			else:
 				arr_disp = arr[::_ds, ::_ds]
 			imp = axp.imshow(arr_disp, cmap=plt.get_cmap("viridis"), interpolation="nearest", vmin=vmin, vmax=vmax)
-			# format param title: convert underscores to spaces and capitalize first letter
-			tmp = key.replace('_', ' ')
-			title = tmp.capitalize()
+			title = key.replace('_', ' ').title()
+			if 'Death' in title or 'death' in key:
+				title = title + ' Rate'
 			axp.set_title(title)
 			# colorbar placed in dedicated axis
 			# create a narrow colorbar axis to the right of the image
@@ -561,20 +485,21 @@ class CA:
 			param_imps.append(imp)
 			param_cbs.append(cb)
 
-		# setup time-series plots (empty at start) for requested species
+		# setup time-series plots (empty at start)
 		time_x = []
-		# mapping species index -> counts list
-		viz_counts = {s: [] for s in species_to_plot}
-		state_lines = []
+		prey_ts = []
+		pred_ts = []
 		# match colors to the states colormap: state values map between 0..n_species
-		for s_idx in species_to_plot:
-			try:
-				color = cmap_obj(float(s_idx) / max(1, self.n_species))
-			except Exception:
-				color = None
-			label = _species_label(s_idx)
-			ln, = ax_state_ts.plot([], [], label=label, color=color)
-			state_lines.append(ln)
+		try:
+			prey_color = cmap_obj(1.0 / max(1, self.n_species))
+		except Exception:
+			prey_color = 'green'
+		try:
+			pred_color = cmap_obj(2.0 / max(1, self.n_species))
+		except Exception:
+			pred_color = 'red'
+		line_prey, = ax_state_ts.plot([], [], label='Prey', color=prey_color)
+		line_pred, = ax_state_ts.plot([], [], label='Predator', color=pred_color)
 		ax_state_ts.set_xlabel('Iteration')
 		ax_state_ts.set_ylabel('Count')
 		ax_state_ts.legend()
@@ -582,19 +507,22 @@ class CA:
 		ax_state_ts.set_xlim(0, 1)
 		ax_state_ts.set_ylim(0, rows * cols)
 
-		# percentiles plots (one per requested species when neighbors shown)
-		perc_lines = []
-		if k_hist > 0:
-			for i, axp in enumerate(ax_percentiles_list):
-				lmean, = axp.plot([], [], label='Mean')
-				axp.set_xlabel('Iteration')
-				axp.set_ylabel('Neighbor count')
-				axp.legend()
-				axp.set_xlim(0, 1)
-				axp.set_ylim(0, n_neighbors)
-				perc_lines.append(lmean)
-		else:
-			perc_lines = []
+		# percentiles plot (only mean when enabled)
+		perc_x = []
+		perc_mean = []
+		# define placeholders so later code can always unpack perc_lines
+		line_25 = None
+		line_mean = None
+		line_75 = None
+		if show_neighbors:
+			line_mean, = ax_percentiles.plot([], [], label='Mean')
+			ax_percentiles.set_xlabel('Iteration')
+			ax_percentiles.set_ylabel('Neighbor count')
+			ax_percentiles.legend()
+		# initialize percentiles xlim/ylim (only when axis exists)
+		if ax_percentiles is not None:
+			ax_percentiles.set_xlim(0, 1)
+			ax_percentiles.set_ylim(0, n_neighbors)
 
 		# param stats plots: for each param, three lines
 		param_stat_lines = {}
@@ -636,8 +564,8 @@ class CA:
 		self._viz_interval = interval
 		self._viz_fig = fig
 		self._viz_axes = {
-			"hist": (ax_hist_list if k_hist > 0 else None),
-			"percentiles": (ax_percentiles_list if k_hist > 0 else None),
+			"hist": ax_hist,
+			"percentiles": ax_percentiles,
 			"states": ax_states,
 			"state_ts": ax_state_ts,
 			"param_imgs": ax_params,
@@ -647,22 +575,20 @@ class CA:
 			"im_states": im_states,
 			"param_imps": param_imps,
 			"param_cbs": param_cbs,
-			"hist_bars": hist_bars_all,
-			"state_lines": state_lines,
-			"perc_lines": perc_lines,
+			"hist_bars": bars,
+			"state_lines": (line_prey, line_pred),
+			"perc_lines": (line_25, line_mean, line_75),
 			"param_stat_lines": param_stat_lines,
 		}
 		self._viz_time = []
-		self._viz_species_counts = viz_counts
+		self._viz_prey_counts = []
+		self._viz_pred_counts = []
 		self._viz_param_stats = {k: {"min": [], "mean": [], "max": []} for k in param_keys}
-		# neighbor stats: per-species percentile tracking
-		self._viz_neighbor_stats = {s: {"25": [], "mean": [], "75": []} for s in species_to_plot}
+		self._viz_neighbor_stats = {"25": [], "mean": [], "75": []}
 		self._viz_param_keys = param_keys
 		self._viz_pause = float(pause)
 		self._viz_cmap = cmap_obj
 		self._viz_snapshot_dir = None
-		# store which species are being plotted for use in _viz_update
-		self._viz_species_to_plot = species_to_plot
 		# downsample factor used for display
 		self._viz_ds = _ds
 		# precompute a slice tuple for downsampled display indexing
@@ -720,76 +646,71 @@ class CA:
 			_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
 			im_states.set_data(grid[_vslice])
 
-		# update histograms and percentiles for requested species
-		counts = self.count_neighbors()
+		# update histogram of prey neighbor counts
+		counts = self.count_neighbors()[0]
+		prey_mask = (grid == 1)
+		if np.any(prey_mask):
+			vals = counts[prey_mask]
+		else:
+			vals = np.array([], dtype=int)
 		nn = 4 if self.neighborhood == "neumann" else 8
-		hist_bars = art.get("hist_bars", [])
-		perc_lines = art.get("perc_lines", [])
-		# append iteration to shared time axis
+		hist_vals = np.bincount(vals, minlength=nn + 1)
+		bars = art.get("hist_bars")
+		if bars is not None:
+			for rect, h in zip(bars, hist_vals):
+				rect.set_height(h)
+
+		# compute percentiles
+		if vals.size > 0:
+			p25 = float(np.percentile(vals, 25))
+			pmean = float(np.mean(vals))
+			p75 = float(np.percentile(vals, 75))
+		else:
+			p25 = pmean = p75 = 0.0
+
+		# update time series data (append)
 		self._viz_time.append(iteration)
-		# for each requested species, update histogram, percentiles and counts
-		for i, s_idx in enumerate(self._viz_species_to_plot):
-			# neighbor counts for species s_idx
-			mask = (grid == s_idx)
-			if np.any(mask):
-				vals = counts[s_idx - 1][mask]
-			else:
-				vals = np.array([], dtype=int)
-			hv = np.bincount(vals, minlength=nn + 1)
-			# update corresponding histogram bars if present
-			if i < len(hist_bars):
-				group = hist_bars[i]
-				for rect, h in zip(group, hv):
-					rect.set_height(h)
-			# percentiles
-			if vals.size > 0:
-				p25 = float(np.percentile(vals, 25))
-				pmean = float(np.mean(vals))
-				p75 = float(np.percentile(vals, 75))
-			else:
-				p25 = pmean = p75 = 0.0
-			# store neighbor stats per species
-			self._viz_neighbor_stats.setdefault(s_idx, {"25": [], "mean": [], "75": []})
-			self._viz_neighbor_stats[s_idx]["25"].append(p25)
-			self._viz_neighbor_stats[s_idx]["mean"].append(pmean)
-			self._viz_neighbor_stats[s_idx]["75"].append(p75)
-			# update species counts time-series
-			cnt = int(np.count_nonzero(grid == s_idx))
-			self._viz_species_counts.setdefault(s_idx, []).append(cnt)
+		prey_count = int(np.count_nonzero(grid == 1))
+		pred_count = int(np.count_nonzero(grid == 2))
+		self._viz_prey_counts.append(prey_count)
+		self._viz_pred_counts.append(pred_count)
+		self._viz_neighbor_stats["25"].append(p25)
+		self._viz_neighbor_stats["mean"].append(pmean)
+		self._viz_neighbor_stats["75"].append(p75)
 
 		# update state time-series lines (do not autoscale; update xlim incrementally)
-		state_lines = art.get("state_lines", [])
-		for idx, ln in enumerate(state_lines):
-			if ln is not None:
-				s_idx = self._viz_species_to_plot[idx]
-				ln.set_data(self._viz_time, self._viz_species_counts.get(s_idx, []))
+		line_prey, line_pred = art.get("state_lines", (None, None))
+		if line_prey is not None:
+			line_prey.set_data(self._viz_time, self._viz_prey_counts)
+		if line_pred is not None:
+			line_pred.set_data(self._viz_time, self._viz_pred_counts)
 		# adjust xlim/ylim incrementally to avoid per-frame relim
 		if len(self._viz_time) > 0:
 			ax = self._viz_axes["state_ts"]
 			cur_xmax = ax.get_xlim()[1]
 			if iteration > cur_xmax:
 				ax.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
-			# ensure some padding for y across all tracked species
-			ymax = 1
-			for s_idx in self._viz_species_to_plot:
-				ymax = max(ymax, max(self._viz_species_counts.get(s_idx, [0]) or [0]))
+			# ensure some padding for y
+			ymax = max(max(self._viz_prey_counts or [0]), max(self._viz_pred_counts or [0]), 1)
 			ax.set_ylim(0, ymax * 1.1)
 
-		# update percentiles lines
-		for idx, lmean in enumerate(perc_lines):
-			if lmean is not None:
-				s_idx = self._viz_species_to_plot[idx]
-				lmean.set_data(self._viz_time, self._viz_neighbor_stats.get(s_idx, {}).get("mean", []))
-		# keep fixed y-limits for percentiles (if axes exist)
+		# update percentiles plot (avoid autoscale)
+		l25, lmean, l75 = art.get("perc_lines", (None, None, None))
+		if l25 is not None:
+			l25.set_data(self._viz_time, self._viz_neighbor_stats["25"])
+		if lmean is not None:
+			lmean.set_data(self._viz_time, self._viz_neighbor_stats["mean"])
+		if l75 is not None:
+			l75.set_data(self._viz_time, self._viz_neighbor_stats["75"])
+		# keep fixed y-limits for percentiles (if axis exists)
 		if len(self._viz_time) > 0:
-			axp_list = self._viz_axes.get("percentiles")
-			if axp_list is not None:
-				for axp in axp_list:
-					axp.set_ylim(0, nn)
-					# expand xlim incrementally
-					cur_xmax = axp.get_xlim()[1]
-					if iteration > cur_xmax:
-						axp.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
+			axp = self._viz_axes.get("percentiles")
+			if axp is not None:
+				axp.set_ylim(0, nn)
+				# expand xlim incrementally
+				cur_xmax = axp.get_xlim()[1]
+				if iteration > cur_xmax:
+					axp.set_xlim(0, max(iteration, int(cur_xmax * 1.2)))
 
 		# update param images and stats
 		for idx, key in enumerate(self._viz_param_keys):
@@ -848,11 +769,9 @@ class CA:
 				for im in art.get("param_imps", []):
 					if im is not None:
 						im.axes.draw_artist(im)
-				# histogram bars (possibly multiple groups)
-				for group in art.get("hist_bars", []):
-					for rect in group:
-						if rect is not None:
-							rect.axes.draw_artist(rect)
+				# histogram bars
+				for rect in art.get("hist_bars", []):
+					rect.axes.draw_artist(rect)
 				# state lines
 				for ln in art.get("state_lines", ()): 
 					if ln is not None:
