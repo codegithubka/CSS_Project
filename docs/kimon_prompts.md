@@ -51,3 +51,4 @@
 
 1. I am considering using numba for optimization and faster runs in the HPC. Outline an implementation plan, practical considerations, and feasibility within a logical timeframe.
 
+2. Walk me through modifying tg
