@@ -35,7 +35,7 @@ def main():
 
     # Run the simulation (ensure the plot stays open afterwards)
     try:
-        pp.run(2500)
+        pp.run(2500, stop_evolution_at=1000)
     finally:
         # Block and show the final figure so the user can inspect it.
         # Turn off interactive mode (visualize() enabled it) and show blocking.
