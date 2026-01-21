@@ -8,7 +8,7 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
-from scripts.numba_optimized import _pp_async_kernel
+from scripts.numba_optimized import PPKernel
 from numba import njit
 
 # Module logger
@@ -891,6 +891,8 @@ class PP(CA):
 		if seed is not None:
 			# This sets the seed for all @njit functions globally
 			set_numba_seed(seed)
+   
+		self._kernel = PPKernel(rows, cols, neighborhood)
 
 
 	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
@@ -1175,30 +1177,26 @@ class PP(CA):
 		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
-		dr_arr, dc_arr, _ = self._neighbor_shifts()
-		
 		# Get the evolved prey death map
 		# Fallback to a full array of the global param if it doesn't exist yet
 		p_death_arr = self.cell_params.get("prey_death")
 		if p_death_arr is None:
-			p_death_arr = np.full(self.grid.shape, self.params["prey_death"])
+			p_death_arr = np.full(self.grid.shape, self.params["prey_death"], dtype=np.float64)
 
 		meta = self._evolve_info.get("prey_death", {"sd": 0.05, "min": 0.001, "max": 0.1})
 
-		# Call the JIT kernel
-		self.grid = _pp_async_kernel(
+		# Call the optimized kernel (uses pre-allocated buffers)
+		self._kernel.update(
 			self.grid,
 			p_death_arr,
 			float(self.params["prey_birth"]),
 			float(self.params["prey_death"]),
 			float(self.params["predator_birth"]),
 			float(self.params["predator_death"]),
-			dr_arr.astype(np.int32),
-			dc_arr.astype(np.int32),
 			float(meta["sd"]),
 			float(meta["min"]),
 			float(meta["max"]),
-			self._evolution_stopped
+			self._evolution_stopped,
 		)
     
 	def update(self) -> None:

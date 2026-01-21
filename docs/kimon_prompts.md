@@ -46,9 +46,24 @@
 
 ---
 
-### Script Optimization\
-
+### Script Optimization
 
 1. I am considering using numba for optimization and faster runs in the HPC. Outline an implementation plan, practical considerations, and feasibility within a logical timeframe.
 
-2. Walk me through modifying tg
+2. Walk me through modifying the update_async method for simulation speedup
+
+3. Provide me with a script using cProfile to profile the analysis script and target optimization goals specifically.
+
+4. Write a small benchmark script for a large simulation to test how much the performance using numba has imrpoved (or no)
+
+5. Identify the major bottlenecks in the script and suggest possible (realisic) fixes. if you lie about performance improvement expecatations, you will be replaced.
+
+6. I am currently storing anslysis data in a .json file. Help me refactor the 2D sweep function to store binary data instead to minimize communication overhead.
+
+7. The PCF is O(N^2). Show me how to use cell lists instead and spatial hashing. This is the biggest bottlneck so we must prioritize this. Walk me through reftorings in numba_optimized.py
+
+8. We should also pre-allocate the buffers outside the kernel. Right now we are allocating memoery on every call.
+
+9. Help me write a benchmark script to test the updated version against a non-numba optimized version. Create a summary txt with benchmark results.
+
+10. Create unit tests for pp_analysis and numba_optimized files. Test all methods and make sure the scripts are HPC ready. Provide me with an outline of tests.
