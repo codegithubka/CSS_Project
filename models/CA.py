@@ -208,6 +208,9 @@ class CA:
 		# normalize snapshot iteration list
 		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
 
+		# normalize snapshot iteration list
+		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
+
 		for i in range(steps):
 			self.update()
 			# Update visualization if enabled every `interval` iterations
@@ -240,6 +243,30 @@ class CA:
 			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
 				# disable further evolution
 				self._evolve_info = {}
+
+			# create snapshots if requested at this iteration
+			if (i + 1) in snapshot_set:
+				try:
+					# create snapshot folder if not present
+					if not hasattr(self, "_viz_snapshot_dir") or self._viz_snapshot_dir is None:
+						import os, time
+
+						base = "results"
+						ts = int(time.time())
+						run_folder = f"run-{ts}"
+						full = os.path.join(base, run_folder)
+						os.makedirs(full, exist_ok=True)
+						self._viz_snapshot_dir = full
+					self._viz_save_snapshot(i + 1)
+				except Exception:
+					pass
+
+			# stop evolution at specified time-step (disable further evolution)
+			if stop_evolution_at is not None and (i + 1) == int(stop_evolution_at):
+				try:
+					self._evolve_info = {}
+				except Exception:
+					pass
 
 	def visualize(
 		self,
