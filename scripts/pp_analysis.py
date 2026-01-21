@@ -33,6 +33,10 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
 
+project_root = str(Path(__file__).parents[1])
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 try:
     from scripts.numba_optimized import (
         compute_pcf_periodic_fast,
@@ -80,8 +84,8 @@ class Config:
     # Simulation length
     warmup_steps: int = 200
     measurement_steps: int = 300
-    cluster_samples: int = 10
-    cluster_interval: int = 100 
+    cluster_samples: int = 3
+    cluster_interval: int = 1000
     
     # Ecological parameters
     evolve_sd: float = 0.10
@@ -104,7 +108,7 @@ class Config:
     synchronous: bool = False
     
     # Snapshot settings
-    save_snapshots: bool = True
+    save_snapshots: bool = False
     snapshot_times: Tuple[int, ...] = (50, 100, 150, 200, 250)
     
     n_jobs: int = -1  # -1 = all available cores
@@ -207,6 +211,7 @@ def get_evolution_metadata(model)->Dict:
             }
     
     return metadata
+
 
 
 def collect_comprehensive_metrics(model, step: int) -> Dict:
@@ -581,6 +586,39 @@ def save_diagnostic_snapshot(
     plt.savefig(output_path / f'diagnostic_{run_id}.png', dpi=120, bbox_inches='tight')
     plt.close()
     
+
+def save_sweep_binary(results: List[Dict], output_path: Path):
+    """Saves high-volume sweep data to compressed .npz to avoid JSON overhead."""
+    # We use a dictionary to map each run to its own key-space
+    data_to_save = {}
+    for i, res in enumerate(results):
+        prefix = f"run_{i}_"
+        for key, val in res.items():
+            # np.savez handles numbers and arrays perfectly; 
+            # objects/dicts are converted to array-wrappers
+            data_to_save[f"{prefix}{key}"] = np.array(val)
+            
+    np.savez_compressed(output_path, **data_to_save)
+    
+def warmup_numba_kernels(grid_size: int):
+    """Compiles kernels in the main thread so workers load from cache instantly."""
+    logging.info(f"Warming up Numba kernels for {grid_size}x{grid_size} grid...")
+    
+    # Create dummy data structures matching real types
+    dummy_grid = np.zeros((grid_size, grid_size), dtype=np.int32)
+    p_death_arr = np.full((grid_size, grid_size), 0.05, dtype=np.float64)
+    dr = np.array([-1, 1, 0, 0], dtype=np.int32)
+    dc = np.array([0, 0, -1, 1], dtype=np.int32)
+    
+    # Trigger Simulation JIT
+    from scripts.numba_optimized import _pp_async_kernel, _compute_distance_histogram
+    _ = _pp_async_kernel(dummy_grid, p_death_arr, 0.2, 0.05, 0.2, 0.1, dr, dc, 0.1, 0.001, 0.1, False)
+
+    # Trigger PCF JIT
+    pos = np.ascontiguousarray(np.argwhere(dummy_grid == 0)[:10], dtype=np.float64)
+    if len(pos) > 0:
+        _ = _compute_distance_histogram(pos, pos, float(grid_size), float(grid_size), 20.0, 20, True)
+ 
     
 ##########################################################################
 # Main Simulation Function
@@ -943,6 +981,8 @@ def run_single_simulation_fss(
 def run_2d_sweep(cfg, output_dir, logger) -> List[Dict]:
     """Run full 2D parameter sweep with optional diagnostic snapshots."""
     from joblib import Parallel, delayed
+    if USE_NUMBA:
+        warmup_numba_kernels(cfg.default_grid)
 
     prey_births = cfg.get_prey_births()
     prey_deaths = cfg.get_prey_deaths()
@@ -987,13 +1027,21 @@ def run_2d_sweep(cfg, output_dir, logger) -> List[Dict]:
         for pb, pd, gs, seed, evo, save_diag in jobs
     )
 
-    output_file = output_dir / "sweep_results.json"
-    with open(output_file, "w") as f:
-        json.dump(results, f)
-    logger.info(f"Saved to {output_file}")
+    # REPLACE THE JSON BLOCK WITH THIS:
+    output_file = output_dir / "sweep_results.npz"
+    save_sweep_binary(results, output_file)
+    
+    # Save a tiny 'metadata' JSON just for quick human reading
+    meta = {
+        "n_sims": len(results),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "grid_size": cfg.default_grid
+    }
+    with open(output_dir / "sweep_metadata.json", "w") as f:
+        json.dump(meta, f, indent=2)
 
+    logger.info(f"SUCCESS: Saved binary sweep results to {output_file}")
     return results
-
 
 def run_sensitivity(
     cfg: Config, output_dir: Path, logger: logging.Logger

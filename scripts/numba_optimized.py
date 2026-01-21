@@ -32,57 +32,74 @@ def _pp_async_kernel(
     rows, cols = grid.shape
     n_shifts = len(dr_arr)
     
-    # 1. Identify occupied cells
-    occupied = []
+    # 1. PRE-ALLOCATE COORDINATE BUFFER
+    # Instead of a list, we use a fixed-size array. 
+    # Max possible occupied cells is rows * cols.
+    occupied = np.empty((rows * cols, 2), dtype=np.int32)
+    count = 0
+    
     for r in range(rows):
         for c in range(cols):
             if grid[r, c] != 0:
-                occupied.append((r, c))
+                occupied[count, 0] = r
+                occupied[count, 1] = c
+                count += 1
     
-    # 2. Shuffle (Asynchronous behavior)
-    N = len(occupied)
-    for i in range(N - 1, 0, -1):
+    # 2. IN-PLACE FISHER-YATES SHUFFLE
+    # We only shuffle the part of the buffer we actually filled (up to 'count')
+    for i in range(count - 1, 0, -1):
         j = np.random.randint(0, i + 1)
-        temp = occupied[i]
-        occupied[i] = occupied[j]
-        occupied[j] = temp
+        # Swap row index
+        r_temp = occupied[i, 0]
+        occupied[i, 0] = occupied[j, 0]
+        occupied[j, 0] = r_temp
+        # Swap col index
+        c_temp = occupied[i, 1]
+        occupied[i, 1] = occupied[j, 1]
+        occupied[j, 1] = c_temp
         
-    # 3. Process
-    for pos in occupied:
-        r, c = pos
+    # 3. PROCESS ACTIVE CELLS
+    for i in range(count):
+        r = occupied[i, 0]
+        c = occupied[i, 1]
+        
         state = grid[r, c]
-        if state == 0: continue 
+        if state == 0: 
+            continue 
 
+        # Pick random neighbor
         nbi = np.random.randint(0, n_shifts)
         nr = (r + dr_arr[nbi]) % rows
         nc = (c + dc_arr[nbi]) % cols
 
         if state == 1: # PREY
-            # Death
+            # Death logic
             if np.random.random() < prey_death_arr[r, c]:
                 grid[r, c] = 0
                 prey_death_arr[r, c] = np.nan
-            # Birth into empty cell
+            # Birth logic
             elif grid[nr, nc] == 0:
                 if np.random.random() < p_birth_val:
                     grid[nr, nc] = 1
-                    # Inheritance
                     parent_val = prey_death_arr[r, c]
                     if not evolution_stopped:
                         child_val = parent_val + np.random.normal(0, evolve_sd)
-                        prey_death_arr[nr, nc] = max(evolve_min, min(evolve_max, child_val))
+                        # Manual clip is faster than np.clip in Numba
+                        if child_val < evolve_min: child_val = evolve_min
+                        if child_val > evolve_max: child_val = evolve_max
+                        prey_death_arr[nr, nc] = child_val
                     else:
                         prey_death_arr[nr, nc] = parent_val
 
         elif state == 2: # PREDATOR
-            # Death
+            # Death logic
             if np.random.random() < pred_death_val:
                 grid[r, c] = 0
-            # Birth into prey cell
+            # Birth logic (eating prey)
             elif grid[nr, nc] == 1:
                 if np.random.random() < pred_birth_val:
                     grid[nr, nc] = 2
-                    prey_death_arr[nr, nc] = np.nan # Predator eats prey, clear params
+                    prey_death_arr[nr, nc] = np.nan
                     
     return grid
 

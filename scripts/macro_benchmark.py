@@ -15,12 +15,12 @@ def run_stress_benchmark():
     cfg = Config()
     # INCREASE WORKLOAD: 150x150 grid and 1000 total steps
     # This ensures the 'race' is long enough to overcome the 'warmup'
-    cfg.default_grid = 150       
+    cfg.default_grid = 200     
     cfg.n_prey_birth = 2        # 2x2 sweep is enough to see scaling
     cfg.n_prey_death = 2
     cfg.n_replicates = 3        
     cfg.warmup_steps = 400
-    cfg.measurement_steps = 600
+    cfg.measurement_steps = 10000
     cfg.n_jobs = 4              
     
     output_dir = Path("results_stress")
