@@ -1054,11 +1054,16 @@ class PP(CA):
 		Implements a vectorized equivalent of the random-sequential
 		asynchronous update. Each occupied cell (prey or predator) gets at
 		most one reproduction attempt: with probability `birth` it chooses a
-		random neighbor and, if that neighbor in the reference grid has the
+		neighbor and, if that neighbor in the reference grid has the
 		required target state (empty for prey, prey for predator), it
-		becomes a candidate attempt. When multiple reproducers target the
-		same cell, one attempt is chosen uniformly at random to succeed.
-		Deaths are applied the same vectorized way as in the async update.
+		becomes a candidate attempt. 
+		
+		Predators use directed movement: they preferentially move toward
+		prey neighbors when available; otherwise pick a random neighbor.
+		
+		When multiple reproducers target the same cell, one attempt is 
+		chosen uniformly at random to succeed. Deaths are applied the same 
+		vectorized way as in the async update.
 		"""
 
 		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
@@ -1154,23 +1159,114 @@ class PP(CA):
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, new_state_val)
 
+		def _process_predator_hunting(sources, birth_param_key, birth_prob):
+			"""Handle predator reproduction with directed movement toward prey.
+			
+			Predators check all neighbors: if any neighbor contains prey, 
+			preferentially move to one of them; otherwise pick a random neighbor.
+			"""
+			if sources.size == 0:
+				return
+
+			M = sources.shape[0]
+			# Determine per-source birth probabilities (from cell_params if present)
+			parent_probs = self._get_parent_probs(sources, birth_param_key, birth_prob)
+
+			# Which sources attempt reproduction
+			attempt_mask = gen.random(M) < parent_probs
+			if not np.any(attempt_mask):
+				return
+
+			src = sources[attempt_mask]
+			K = src.shape[0]
+
+			# For each predator, check all neighbors to find prey
+			selected_neighbors = np.zeros((K, 2), dtype=int)
+			
+			for i in range(K):
+				r, c = int(src[i, 0]), int(src[i, 1])
+				# Get all neighbor positions
+				neighbors_r = (r + dr_arr) % rows
+				neighbors_c = (c + dc_arr) % cols
+				# Check which neighbors have prey
+				prey_neighbors = (grid_ref[neighbors_r, neighbors_c] == 1)
+				
+				if np.any(prey_neighbors):
+					# Pick one prey neighbor uniformly at random (directed movement)
+					prey_indices = np.where(prey_neighbors)[0]
+					chosen_idx = int(gen.choice(prey_indices))
+				else:
+					# No prey visible; pick a random neighbor
+					chosen_idx = int(gen.integers(0, n_shifts))
+				
+				selected_neighbors[i, 0] = neighbors_r[chosen_idx]
+				selected_neighbors[i, 1] = neighbors_c[chosen_idx]
+
+			nr = selected_neighbors[:, 0]
+			nc = selected_neighbors[:, 1]
+
+			# Only keep attempts where the target was prey (required state = 1)
+			valid_mask = (grid_ref[nr, nc] == 1)
+			if not np.any(valid_mask):
+				return
+
+			src_valid = src[valid_mask]
+			nr = nr[valid_mask]
+			nc = nc[valid_mask]
+
+			# Flatten target indices to group collisions
+			target_flat = (nr * cols + nc).astype(np.int64)
+			# Sort targets to find groups that target the same cell
+			order = np.argsort(target_flat)
+			tf_sorted = target_flat[order]
+
+			# unique targets (on the sorted array) with start indices and counts
+			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
+			if uniq_targets.size == 0:
+				return
+
+			# For each unique target, pick one predator uniformly at random
+			chosen_sorted_positions = []
+			for start, cnt in zip(idx_start, counts):
+				off = int(gen.integers(0, cnt))
+				chosen_sorted_positions.append(start + off)
+			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
+
+			# Map back to indices in the filtered attempts array
+			chosen_indices = order[chosen_sorted_positions]
+
+			chosen_target_flats = target_flat[chosen_indices]
+			chosen_rs = (chosen_target_flats // cols).astype(int)
+			chosen_cs = (chosen_target_flats % cols).astype(int)
+
+			# Determine parent positions (predators) corresponding to chosen attempts
+			parents = src_valid[chosen_indices]
+
+			# Apply successful hunts: predators convert prey to predator
+			grid[chosen_rs, chosen_cs] = 2
+
+			# Handle inheritance/clearing of per-cell parameters
+			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, 2)
+
 		# Prey reproduce into empty cells (target state 0 -> new state 1)
 		prey_sources = np.argwhere(grid_ref == 1)
 		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
 
-		# Predators reproduce into prey cells (target state 1 -> new state 2)
+		# Predators hunt and reproduce with directed movement toward prey
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
+		_process_predator_hunting(pred_sources, "predator_birth", self.params["predator_birth"])
 
 	def update_async(self) -> None:
-		"""Asynchronous (random-sequential) update.
+		"""Asynchronous (random-sequential) update with directed predator movement.
 
 		Rules (applied using a copy of the current grid for reference):
 		- Iterate occupied cells in random order.
 		- Prey (1): pick random neighbor; if neighbor was empty in copy,
 		  reproduce into it with probability `prey_birth`.
-		- Predator (2): pick random neighbor; if neighbor was prey in copy,
-		  reproduce into it (convert to predator) with probability `predator_birth`.
+		- Predator (2): check all neighbors for prey. If prey neighbors exist,
+		  pick one of them uniformly at random (directed hunt). Otherwise pick
+		  a random neighbor. If target is prey in reference copy, reproduce 
+		  (convert to predator) with probability `predator_birth`.
 		- After the reproduction loop, apply deaths synchronously using the
 		  copy as the reference so newly created individuals are not instantly
 		  killed. Deaths only remove individuals if the current cell still
@@ -1202,13 +1298,14 @@ class PP(CA):
 			for idx in order:
 				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
 				state = int(grid_ref[r, c])
-				# pick a random neighbor shift
-				nbi = int(gen.integers(0, n_shifts))
-				dr = int(dr_arr[nbi])
-				dc = int(dc_arr[nbi])
-				nr = (r + dr) % rows
-				nc = (c + dc) % cols
+				
 				if state == 1:
+					# Prey: pick a random neighbor
+					nbi = int(gen.integers(0, n_shifts))
+					dr = int(dr_arr[nbi])
+					dc = int(dc_arr[nbi])
+					nr = (r + dr) % rows
+					nc = (c + dc) % cols
 					# Prey reproduces into empty neighbor (reference must be empty)
 					if grid_ref[nr, nc] == 0:
 						# per-parent birth prob
@@ -1218,7 +1315,25 @@ class PP(CA):
 							grid[nr, nc] = 1
 							# handle param clearing/inheritance for a single birth
 							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 1)
+				
 				elif state == 2:
+					# Predator: directed hunt toward prey
+					# Check all neighbors for prey
+					neighbors_r = (r + dr_arr) % rows
+					neighbors_c = (c + dc_arr) % cols
+					prey_neighbors = (grid_ref[neighbors_r, neighbors_c] == 1)
+					
+					if np.any(prey_neighbors):
+						# At least one prey neighbor: pick one uniformly at random
+						prey_indices = np.where(prey_neighbors)[0]
+						chosen_idx = int(gen.choice(prey_indices))
+					else:
+						# No prey visible: pick a random neighbor (explore)
+						chosen_idx = int(gen.integers(0, n_shifts))
+					
+					nr = int(neighbors_r[chosen_idx])
+					nc = int(neighbors_c[chosen_idx])
+					
 					# Predator reproduces into prey neighbor (reference must be prey)
 					if grid_ref[nr, nc] == 1:
 						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(params["predator_birth"]))[0]
