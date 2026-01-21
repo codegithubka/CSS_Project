@@ -4,12 +4,13 @@ PP Evolutionary Analysis - Snellius HPC Version
 ================================================
 
 Comprehensive analysis of predator-prey cellular automaton with evolutionary dynamics.
+Focus: Prey Hydra Effect - higher prey death rates leading to higher prey density.
 
 Analyses:
-1. 2D parameter sweep (prey_birth × predator_death)
-2. Hydra effect quantification (dP/dd derivative)
+1. 2D parameter sweep (prey_birth × prey_death)
+2. Hydra effect quantification (dN/dd derivative - prey pop vs prey death)
 3. Critical point search (τ ≈ 2.05)
-4. Evolution sensitivity (SD, min, max sweeps)
+4. Evolution sensitivity (SD sweeps)
 5. Finite-size scaling (multiple grid sizes)
 
 Usage:
@@ -51,29 +52,29 @@ class Config:
     RESOURCE PROFILES:
     -----------------
     MINIMAL (~15 core-hours):
-        n_prey_birth=10, n_pred_death=10, n_replicates=15, default_grid=100
+        n_prey_birth=10, n_prey_death=10, n_replicates=15, default_grid=100
 
     STANDARD (~40 core-hours):
-        n_prey_birth=15, n_pred_death=15, n_replicates=25, default_grid=100
+        n_prey_birth=15, n_prey_death=15, n_replicates=25, default_grid=100
 
     HIGH-QUALITY (~80 core-hours):
-        n_prey_birth=15, n_pred_death=15, n_replicates=25, default_grid=150
+        n_prey_birth=15, n_prey_death=15, n_replicates=25, default_grid=150
 
     PUBLICATION (~150 core-hours):
-        n_prey_birth=20, n_pred_death=20, n_replicates=30, default_grid=150
+        n_prey_birth=20, n_prey_death=20, n_replicates=30, default_grid=150
     """
 
     # Grid settings
     default_grid: int = 100
     densities: Tuple[float, float] = (0.30, 0.15)
 
-    # 2D sweep resolution
+    # 2D sweep resolution (prey_birth × prey_death)
     n_prey_birth: int = 15
-    n_pred_death: int = 15
-    prey_birth_min: float = 0.15
-    prey_birth_max: float = 0.50
-    pred_death_min: float = 0.02
-    pred_death_max: float = 0.22
+    n_prey_death: int = 15
+    prey_birth_min: float = 0.10
+    prey_birth_max: float = 0.35
+    prey_death_min: float = 0.001
+    prey_death_max: float = 0.10
 
     # Replicates per parameter combination
     n_replicates: int = 25
@@ -86,14 +87,15 @@ class Config:
     cluster_samples: int = 40
     cluster_interval: int = 8
 
-    # Fixed ecological parameters
-    prey_death: float = 0.05
-    predator_birth: float = 0.20
+    # Fixed ecological parameters (from project spec)
+    predator_death: float = 0.045  # Fixed predator death rate
+    predator_birth: float = 0.80   # Consumption/reproduction rate
 
-    # Evolution parameters (defaults)
-    evolve_sd: float = 0.015
-    evolve_min: float = 0.005
-    evolve_max: float = 0.40
+    # Evolution parameters - evolve PREY DEATH RATE
+    # From project spec: SD=0.1, bounds 0.001-0.1
+    evolve_sd: float = 0.10
+    evolve_min: float = 0.001
+    evolve_max: float = 0.10
 
     # Finite-size scaling
     # Theory: s_c ~ L^1.9, τ should be constant (~2.05)
@@ -102,23 +104,23 @@ class Config:
 
     # Evolution sensitivity
     # Tests how mutation rate affects adaptation
-    sensitivity_sd_values: Tuple[float, ...] = (0.005, 0.010, 0.020, 0.035, 0.050)
+    sensitivity_sd_values: Tuple[float, ...] = (0.02, 0.05, 0.10, 0.15, 0.20)
     sensitivity_replicates: int = 20
 
     # Parallel settings
     n_jobs: int = -1  # -1 = all available cores
-    
+
     synchronous: bool = True  # Use synchronous/async updates
 
     def get_prey_births(self) -> np.ndarray:
         return np.linspace(self.prey_birth_min, self.prey_birth_max, self.n_prey_birth)
 
-    def get_pred_deaths(self) -> np.ndarray:
-        return np.linspace(self.pred_death_min, self.pred_death_max, self.n_pred_death)
+    def get_prey_deaths(self) -> np.ndarray:
+        return np.linspace(self.prey_death_min, self.prey_death_max, self.n_prey_death)
 
     def estimate_runtime(self, n_cores: int = 32) -> str:
         """Estimate total runtime with grid-size scaling."""
-        n_sweep = self.n_prey_birth * self.n_pred_death * self.n_replicates * 2
+        n_sweep = self.n_prey_birth * self.n_prey_death * self.n_replicates * 2
         n_sens = len(self.sensitivity_sd_values) * self.sensitivity_replicates
         n_fss = sum(self.fss_replicates for _ in self.fss_grid_sizes)
 
@@ -143,7 +145,8 @@ class Config:
         return f"{n_sweep + n_sens + n_fss:,} sims, ~{hours:.1f}h on {n_cores} cores (~{core_hours:.0f} core-hours)"
 
 
-# Core functionality# =============================================================================
+# Core functionality
+# =============================================================================
 
 
 def count_populations(grid: np.ndarray) -> Tuple[int, int, int]:
@@ -213,12 +216,13 @@ def fit_truncated_power_law(sizes: np.ndarray, s_min: int = 2) -> Dict:
         return {"tau": np.nan, "s_c": np.nan, "valid": False, "n": len(sizes)}
 
 
-# Sim runner # =============================================================================
+# Sim runner
+# =============================================================================
 
 
 def run_single_simulation(
     prey_birth: float,
-    pred_death: float,
+    prey_death: float,
     grid_size: int,
     seed: int,
     with_evolution: bool,
@@ -244,8 +248,8 @@ def run_single_simulation(
 
     params = {
         "prey_birth": prey_birth,
-        "predator_death": pred_death,
-        "prey_death": cfg.prey_death,
+        "prey_death": prey_death,
+        "predator_death": cfg.predator_death,  # Fixed
         "predator_birth": cfg.predator_birth,
     }
 
@@ -256,11 +260,12 @@ def run_single_simulation(
         neighborhood="moore",
         params=params,
         seed=seed,
-        synchronous = cfg.synchronous # Use synchronous/async updates
+        synchronous=cfg.synchronous
     )
 
+    # Evolve PREY DEATH RATE (not predator death)
     if with_evolution:
-        model.evolve("predator_death", sd=evolve_sd, min=evolve_min, max=evolve_max)
+        model.evolve("prey_death", sd=evolve_sd, min=evolve_min, max=evolve_max)
 
     # Warmup
     model.run(cfg.warmup_steps)
@@ -277,12 +282,12 @@ def run_single_simulation(
         pred_pops.append(pred)
 
         if with_evolution:
-            stats = get_evolved_stats(model, "predator_death")
+            stats = get_evolved_stats(model, "prey_death")
             evolved_vals.append(stats["mean"])
 
         # Cluster sampling (periodic)
         if step % cfg.cluster_interval == 0 and sample_counter < cfg.cluster_samples:
-            if pred > 10:
+            if prey > 10:
                 prey_clusters.extend(measure_cluster_sizes(model.grid, 1))
                 pred_clusters.extend(measure_cluster_sizes(model.grid, 2))
             sample_counter += 1
@@ -290,7 +295,7 @@ def run_single_simulation(
     # Compile results
     result = {
         "prey_birth": prey_birth,
-        "pred_death": pred_death,
+        "prey_death": prey_death,
         "grid_size": grid_size,
         "with_evolution": with_evolution,
         "seed": seed,
@@ -298,18 +303,19 @@ def run_single_simulation(
         "prey_std": float(np.std(prey_pops)),
         "pred_mean": float(np.mean(pred_pops)),
         "pred_std": float(np.std(pred_pops)),
+        "prey_survived": bool(np.mean(prey_pops) > 10),
         "pred_survived": bool(np.mean(pred_pops) > 10),
         "prey_n_clusters": len(prey_clusters),
         "pred_n_clusters": len(pred_clusters),
     }
 
-    # Evolved parameter
+    # Evolved parameter (prey death)
     if with_evolution and evolved_vals:
         valid_evolved = [v for v in evolved_vals if not np.isnan(v)]
-        result["evolved_death_mean"] = (
+        result["evolved_prey_death_mean"] = (
             float(np.mean(valid_evolved)) if valid_evolved else np.nan
         )
-        result["evolved_death_std"] = (
+        result["evolved_prey_death_std"] = (
             float(np.std(valid_evolved)) if valid_evolved else np.nan
         )
         result["evolve_sd"] = evolve_sd
@@ -334,20 +340,21 @@ def run_single_simulation(
     return result
 
 
-# Analysis Runners # =============================================================================
+# Analysis Runners
+# =============================================================================
 
 
 def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
-    """Run full 2D parameter sweep with and without evolution."""
+    """Run full 2D parameter sweep (prey_birth × prey_death) with and without evolution."""
     from joblib import Parallel, delayed
 
     prey_births = cfg.get_prey_births()
-    pred_deaths = cfg.get_pred_deaths()
+    prey_deaths = cfg.get_prey_deaths()
 
     # Generate jobs
     jobs = []
     for pb in prey_births:
-        for pd in pred_deaths:
+        for pd in prey_deaths:
             for rep in range(cfg.n_replicates):
                 seed_base = int(pb * 1000) + int(pd * 10000) + rep
                 jobs.append(
@@ -358,7 +365,9 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
                 )  # With evolution
 
     logger.info(f"2D Sweep: {len(jobs):,} simulations")
-    logger.info(f"  Grid: {len(prey_births)}×{len(pred_deaths)} parameters")
+    logger.info(f"  Grid: {len(prey_births)}×{len(prey_deaths)} parameters")
+    logger.info(f"  prey_birth: [{cfg.prey_birth_min:.3f}, {cfg.prey_birth_max:.3f}]")
+    logger.info(f"  prey_death: [{cfg.prey_death_min:.3f}, {cfg.prey_death_max:.3f}]")
     logger.info(f"  Replicates: {cfg.n_replicates}")
 
     # Run parallel
@@ -383,8 +392,8 @@ def run_sensitivity(
     from joblib import Parallel, delayed
 
     # Fixed parameters in transition zone
-    pb_test = 0.30
-    pd_test = 0.14
+    pb_test = 0.20
+    pd_test = 0.05  # Mid-range prey death
 
     jobs = []
     for sd in cfg.sensitivity_sd_values:
@@ -413,8 +422,8 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
     from joblib import Parallel, delayed
 
     # Fixed parameters in coexistence region
-    pb_test = 0.35
-    pd_test = 0.08
+    pb_test = 0.20
+    pd_test = 0.03  # Lower prey death for stable coexistence
 
     jobs = []
     for L in cfg.fss_grid_sizes:
@@ -438,7 +447,8 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
     return results
 
 
-# Plotting and Summary # =============================================================================
+# Plotting and Summary
+# =============================================================================
 
 
 def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
@@ -450,9 +460,9 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     plt.rcParams["font.size"] = 11
 
     prey_births = cfg.get_prey_births()
-    pred_deaths = cfg.get_pred_deaths()
-    n_pb, n_pd = len(prey_births), len(pred_deaths)
-    extent = [prey_births[0], prey_births[-1], pred_deaths[0], pred_deaths[-1]]
+    prey_deaths = cfg.get_prey_deaths()
+    n_pb, n_pd = len(prey_births), len(prey_deaths)
+    extent = [prey_births[0], prey_births[-1], prey_deaths[0], prey_deaths[-1]]
 
     # Load sweep results
     sweep_file = output_dir / "sweep_results.json"
@@ -466,14 +476,19 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     logger.info(f"Loaded {len(results)} results from {sweep_file}")
 
     # Aggregate into grids
+    # Note: grids indexed as [prey_death_idx, prey_birth_idx]
     grids = {
+        "prey_pop_no_evo": np.full((n_pd, n_pb), np.nan),
+        "prey_pop_evo": np.full((n_pd, n_pb), np.nan),
         "pred_pop_no_evo": np.full((n_pd, n_pb), np.nan),
         "pred_pop_evo": np.full((n_pd, n_pb), np.nan),
-        "survival_no_evo": np.full((n_pd, n_pb), np.nan),
-        "survival_evo": np.full((n_pd, n_pb), np.nan),
+        "survival_prey_no_evo": np.full((n_pd, n_pb), np.nan),
+        "survival_prey_evo": np.full((n_pd, n_pb), np.nan),
+        "survival_pred_no_evo": np.full((n_pd, n_pb), np.nan),
+        "survival_pred_evo": np.full((n_pd, n_pb), np.nan),
         "tau_prey": np.full((n_pd, n_pb), np.nan),
         "tau_pred": np.full((n_pd, n_pb), np.nan),
-        "evolved_death": np.full((n_pd, n_pb), np.nan),
+        "evolved_prey_death": np.full((n_pd, n_pb), np.nan),
     }
 
     # Group by parameters
@@ -481,21 +496,23 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     for r in results:
         key = (
             round(r["prey_birth"], 4),
-            round(r["pred_death"], 4),
+            round(r["prey_death"], 4),
             r["with_evolution"],
         )
         grouped[key].append(r)
 
-    for i, pd in enumerate(pred_deaths):
+    for i, pd in enumerate(prey_deaths):
         for j, pb in enumerate(prey_births):
             pd_r, pb_r = round(pd, 4), round(pb, 4)
 
             no_evo = grouped.get((pb_r, pd_r, False), [])
             if no_evo:
-                grids["pred_pop_no_evo"][i, j] = np.mean(
-                    [r["pred_mean"] for r in no_evo]
+                grids["prey_pop_no_evo"][i, j] = np.mean([r["prey_mean"] for r in no_evo])
+                grids["pred_pop_no_evo"][i, j] = np.mean([r["pred_mean"] for r in no_evo])
+                grids["survival_prey_no_evo"][i, j] = (
+                    np.mean([r["prey_survived"] for r in no_evo]) * 100
                 )
-                grids["survival_no_evo"][i, j] = (
+                grids["survival_pred_no_evo"][i, j] = (
                     np.mean([r["pred_survived"] for r in no_evo]) * 100
                 )
                 taus = [
@@ -515,75 +532,86 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
 
             evo = grouped.get((pb_r, pd_r, True), [])
             if evo:
+                grids["prey_pop_evo"][i, j] = np.mean([r["prey_mean"] for r in evo])
                 grids["pred_pop_evo"][i, j] = np.mean([r["pred_mean"] for r in evo])
-                grids["survival_evo"][i, j] = (
+                grids["survival_prey_evo"][i, j] = (
+                    np.mean([r["prey_survived"] for r in evo]) * 100
+                )
+                grids["survival_pred_evo"][i, j] = (
                     np.mean([r["pred_survived"] for r in evo]) * 100
                 )
-                evolved = [r.get("evolved_death_mean", np.nan) for r in evo]
+                evolved = [r.get("evolved_prey_death_mean", np.nan) for r in evo]
                 evolved = [e for e in evolved if not np.isnan(e)]
                 if evolved:
-                    grids["evolved_death"][i, j] = np.mean(evolved)
+                    grids["evolved_prey_death"][i, j] = np.mean(evolved)
 
-    # Compute Hydra derivative
-    dd = pred_deaths[1] - pred_deaths[0]
-    dP_dd_evo = np.zeros_like(grids["pred_pop_evo"])
+    # Compute PREY Hydra derivative: dN/dd (prey pop vs prey death)
+    dd = prey_deaths[1] - prey_deaths[0]
+    dN_dd_no_evo = np.zeros_like(grids["prey_pop_no_evo"])
+    dN_dd_evo = np.zeros_like(grids["prey_pop_evo"])
     for j in range(n_pb):
-        pop_smooth = gaussian_filter1d(grids["pred_pop_evo"][:, j], sigma=0.8)
-        dP_dd_evo[:, j] = np.gradient(pop_smooth, dd)
+        # No evolution
+        pop_smooth = gaussian_filter1d(grids["prey_pop_no_evo"][:, j], sigma=0.8)
+        dN_dd_no_evo[:, j] = np.gradient(pop_smooth, dd)
+        # With evolution
+        pop_smooth = gaussian_filter1d(grids["prey_pop_evo"][:, j], sigma=0.8)
+        dN_dd_evo[:, j] = np.gradient(pop_smooth, dd)
 
     # =========================================================================
-    # PLOT 1: Phase Diagrams
+    # PLOT 1: Phase Diagrams - Prey Focus
+    # =========================================================================
     fig, axes = plt.subplots(2, 3, figsize=(16, 10))
 
     ax = axes[0, 0]
     im = ax.imshow(
-        grids["pred_pop_no_evo"],
+        grids["prey_pop_no_evo"],
         origin="lower",
         aspect="auto",
         extent=extent,
-        cmap="YlOrRd",
+        cmap="YlGn",
     )
     ax.contour(
         prey_births,
-        pred_deaths,
-        grids["survival_no_evo"],
+        prey_deaths,
+        grids["survival_prey_no_evo"],
         levels=[50],
         colors="black",
         linewidths=2,
     )
     plt.colorbar(im, ax=ax, label="Population")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Predator Pop (No Evolution)\nBlack: 50% survival")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Prey Pop (No Evolution)\nBlack: 50% survival")
 
     ax = axes[0, 1]
     im = ax.imshow(
-        grids["pred_pop_evo"],
+        grids["prey_pop_evo"],
         origin="lower",
         aspect="auto",
         extent=extent,
-        cmap="YlOrRd",
+        cmap="YlGn",
     )
     ax.contour(
         prey_births,
-        pred_deaths,
-        grids["survival_evo"],
+        prey_deaths,
+        grids["survival_prey_evo"],
         levels=[50],
         colors="black",
         linewidths=2,
     )
     plt.colorbar(im, ax=ax, label="Population")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Predator Pop (With Evolution)\nBlack: 50% survival")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Prey Pop (With Evolution)\nBlack: 50% survival")
 
     ax = axes[0, 2]
+    # Evolution advantage for prey
     advantage = np.where(
-        grids["pred_pop_no_evo"] > 10,
-        (grids["pred_pop_evo"] - grids["pred_pop_no_evo"])
-        / grids["pred_pop_no_evo"]
+        grids["prey_pop_no_evo"] > 10,
+        (grids["prey_pop_evo"] - grids["prey_pop_no_evo"])
+        / grids["prey_pop_no_evo"]
         * 100,
-        np.where(grids["pred_pop_evo"] > 10, 500, 0),
+        np.where(grids["prey_pop_evo"] > 10, 500, 0),
     )
     im = ax.imshow(
         np.clip(advantage, -50, 200),
@@ -596,8 +624,8 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     )
     plt.colorbar(im, ax=ax, label="Advantage (%)")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Evolution Advantage\n(Evo - NoEvo) / NoEvo")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Evolution Advantage (Prey)\n(Evo - NoEvo) / NoEvo")
 
     ax = axes[1, 0]
     im = ax.imshow(
@@ -611,7 +639,7 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     )
     ax.contour(
         prey_births,
-        pred_deaths,
+        prey_deaths,
         grids["tau_prey"],
         levels=[2.05],
         colors="green",
@@ -619,35 +647,27 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     )
     plt.colorbar(im, ax=ax, label="τ")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Prey τ (Green: τ=2.05)")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Prey τ (Green: τ=2.05 criticality)")
 
     ax = axes[1, 1]
+    # Evolved prey death rate
     im = ax.imshow(
-        grids["tau_pred"],
+        grids["evolved_prey_death"],
         origin="lower",
         aspect="auto",
         extent=extent,
-        cmap="coolwarm",
-        vmin=1.5,
-        vmax=2.5,
+        cmap="viridis",
     )
-    ax.contour(
-        prey_births,
-        pred_deaths,
-        grids["tau_pred"],
-        levels=[2.05],
-        colors="green",
-        linewidths=2,
-    )
-    plt.colorbar(im, ax=ax, label="τ")
+    plt.colorbar(im, ax=ax, label="Evolved d")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Predator τ (Green: τ=2.05)")
+    ax.set_ylabel("Initial Prey Death Rate")
+    ax.set_title("Evolved Prey Death Rate")
 
     ax = axes[1, 2]
+    # PREY Hydra Effect: dN/dd (no evolution baseline)
     im = ax.imshow(
-        dP_dd_evo,
+        dN_dd_no_evo,
         origin="lower",
         aspect="auto",
         extent=extent,
@@ -656,12 +676,12 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
         vmax=5000,
     )
     ax.contour(
-        prey_births, pred_deaths, dP_dd_evo, levels=[0], colors="black", linewidths=2
+        prey_births, prey_deaths, dN_dd_no_evo, levels=[0], colors="black", linewidths=2
     )
-    plt.colorbar(im, ax=ax, label="dP/dd")
+    plt.colorbar(im, ax=ax, label="dN/dd")
     ax.set_xlabel("Prey Birth Rate")
-    ax.set_ylabel("Predator Death Rate")
-    ax.set_title("Hydra Effect: dP/dd\nRed: Pop ↑ with mortality")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("HYDRA EFFECT: dN/dd\nRed: Prey ↑ with mortality")
 
     plt.tight_layout()
     plt.savefig(output_dir / "phase_diagrams.png", dpi=150, bbox_inches="tight")
@@ -669,7 +689,68 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     logger.info("Saved phase_diagrams.png")
 
     # =========================================================================
-    # PLOT 2: Sensitivity Analysis
+    # PLOT 2: Hydra Effect Detailed Analysis
+    # =========================================================================
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+
+    # Hydra without evolution
+    ax = axes[0]
+    im = ax.imshow(
+        dN_dd_no_evo,
+        origin="lower",
+        aspect="auto",
+        extent=extent,
+        cmap="RdBu_r",
+        vmin=-5000,
+        vmax=5000,
+    )
+    ax.contour(
+        prey_births, prey_deaths, dN_dd_no_evo, levels=[0], colors="black", linewidths=2
+    )
+    plt.colorbar(im, ax=ax, label="dN/dd")
+    ax.set_xlabel("Prey Birth Rate")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Hydra (No Evolution)")
+
+    # Hydra with evolution
+    ax = axes[1]
+    im = ax.imshow(
+        dN_dd_evo,
+        origin="lower",
+        aspect="auto",
+        extent=extent,
+        cmap="RdBu_r",
+        vmin=-5000,
+        vmax=5000,
+    )
+    ax.contour(
+        prey_births, prey_deaths, dN_dd_evo, levels=[0], colors="black", linewidths=2
+    )
+    plt.colorbar(im, ax=ax, label="dN/dd")
+    ax.set_xlabel("Prey Birth Rate")
+    ax.set_ylabel("Prey Death Rate")
+    ax.set_title("Hydra (With Evolution)")
+
+    # Slices at fixed prey_birth
+    ax = axes[2]
+    mid_pb_idx = n_pb // 2
+    ax.plot(prey_deaths, grids["prey_pop_no_evo"][:, mid_pb_idx], 'b-o', 
+            label=f'No Evo (pb={prey_births[mid_pb_idx]:.2f})', markersize=4)
+    ax.plot(prey_deaths, grids["prey_pop_evo"][:, mid_pb_idx], 'g-s',
+            label=f'With Evo (pb={prey_births[mid_pb_idx]:.2f})', markersize=4)
+    ax.set_xlabel("Prey Death Rate")
+    ax.set_ylabel("Prey Population")
+    ax.set_title("Prey Pop vs Death Rate Slice")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / "hydra_analysis.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    logger.info("Saved hydra_analysis.png")
+
+    # =========================================================================
+    # PLOT 3: Sensitivity Analysis
     # =========================================================================
     sens_file = output_dir / "sensitivity_results.json"
     if sens_file.exists():
@@ -680,20 +761,32 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
         for r in sens_results:
             sens_grouped[r.get("evolve_sd", cfg.evolve_sd)].append(r)
 
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        
         sd_vals = sorted(sens_grouped.keys())
-        pops = [np.mean([r["pred_mean"] for r in sens_grouped[sd]]) for sd in sd_vals]
-        stds = [np.std([r["pred_mean"] for r in sens_grouped[sd]]) for sd in sd_vals]
-
-        ax.errorbar(
-            sd_vals, pops, yerr=stds, fmt="o-", capsize=5, markersize=8, linewidth=2
-        )
+        
+        # Prey population vs SD
+        ax = axes[0]
+        pops = [np.mean([r["prey_mean"] for r in sens_grouped[sd]]) for sd in sd_vals]
+        stds = [np.std([r["prey_mean"] for r in sens_grouped[sd]]) for sd in sd_vals]
+        ax.errorbar(sd_vals, pops, yerr=stds, fmt="go-", capsize=5, markersize=8, linewidth=2)
         ax.set_xlabel("Evolution SD", fontsize=12)
-        ax.set_ylabel("Mean Predator Population", fontsize=12)
-        ax.set_title(
-            "Evolution Sensitivity Analysis\n(prey_birth=0.30, pred_death=0.14)",
-            fontsize=14,
-        )
+        ax.set_ylabel("Mean Prey Population", fontsize=12)
+        ax.set_title("Prey Population vs Mutation Rate", fontsize=14)
+        ax.grid(True, alpha=0.3)
+
+        # Evolved death rate vs SD
+        ax = axes[1]
+        evolved = [np.nanmean([r.get("evolved_prey_death_mean", np.nan) for r in sens_grouped[sd]]) 
+                   for sd in sd_vals]
+        evolved_std = [np.nanstd([r.get("evolved_prey_death_mean", np.nan) for r in sens_grouped[sd]]) 
+                       for sd in sd_vals]
+        ax.errorbar(sd_vals, evolved, yerr=evolved_std, fmt="rs-", capsize=5, markersize=8, linewidth=2)
+        ax.axhline(0.05, color="black", linestyle="--", label="Initial d=0.05")
+        ax.set_xlabel("Evolution SD", fontsize=12)
+        ax.set_ylabel("Evolved Prey Death Rate", fontsize=12)
+        ax.set_title("Evolved Death Rate vs Mutation Rate", fontsize=14)
+        ax.legend()
         ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
@@ -702,7 +795,7 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
         logger.info("Saved sensitivity.png")
 
     # =========================================================================
-    # PLOT 3: FSS (if data exists)
+    # PLOT 4: FSS (if data exists)
     # =========================================================================
     fss_file = output_dir / "fss_results.json"
     if fss_file.exists():
@@ -766,24 +859,20 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     # Summary statistics
     # =========================================================================
     summary = {
-        "coexistence_no_evo": int(np.sum(grids["survival_no_evo"] > 80)),
-        "coexistence_evo": int(np.sum(grids["survival_evo"] > 80)),
-        "hydra_region_size": int(
-            np.sum((dP_dd_evo > 0) & (grids["pred_pop_evo"] > 50))
-        ),
-        "max_hydra_strength": float(np.nanmax(dP_dd_evo)),
+        "coexistence_no_evo": int(np.sum((grids["survival_prey_no_evo"] > 80) & (grids["survival_pred_no_evo"] > 80))),
+        "coexistence_evo": int(np.sum((grids["survival_prey_evo"] > 80) & (grids["survival_pred_evo"] > 80))),
+        "hydra_region_size": int(np.sum((dN_dd_no_evo > 0) & (grids["prey_pop_no_evo"] > 50))),
+        "max_hydra_strength": float(np.nanmax(dN_dd_no_evo)),
+        "hydra_region_size_evo": int(np.sum((dN_dd_evo > 0) & (grids["prey_pop_evo"] > 50))),
     }
 
-    # Find critical point
-    dist_crit = np.sqrt(
-        (grids["tau_prey"] - 2.05) ** 2 + (grids["tau_pred"] - 2.05) ** 2
-    )
+    # Find critical point (τ ≈ 2.05 for prey)
+    dist_crit = np.abs(grids["tau_prey"] - 2.05)
     if not np.all(np.isnan(dist_crit)):
         min_idx = np.unravel_index(np.nanargmin(dist_crit), dist_crit.shape)
         summary["critical_prey_birth"] = float(prey_births[min_idx[1]])
-        summary["critical_pred_death"] = float(pred_deaths[min_idx[0]])
+        summary["critical_prey_death"] = float(prey_deaths[min_idx[0]])
         summary["critical_tau_prey"] = float(grids["tau_prey"][min_idx])
-        summary["critical_tau_pred"] = float(grids["tau_pred"][min_idx])
 
     with open(output_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
@@ -793,23 +882,18 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     logger.info("=" * 60)
     logger.info("ANALYSIS SUMMARY")
     logger.info("=" * 60)
-    logger.info(f"Coexistence region (>80% survival):")
-    logger.info(
-        f"  Without evolution: {summary['coexistence_no_evo']} parameter combinations"
-    )
-    logger.info(
-        f"  With evolution: {summary['coexistence_evo']} parameter combinations"
-    )
-    logger.info(
-        f"Hydra effect region (dP/dd > 0): {summary['hydra_region_size']} combinations"
-    )
+    logger.info(f"Coexistence region (prey & pred >80% survival):")
+    logger.info(f"  Without evolution: {summary['coexistence_no_evo']} parameter combinations")
+    logger.info(f"  With evolution: {summary['coexistence_evo']} parameter combinations")
+    logger.info(f"HYDRA EFFECT (dN/dd > 0, prey pop > 50):")
+    logger.info(f"  Without evolution: {summary['hydra_region_size']} combinations")
+    logger.info(f"  With evolution: {summary['hydra_region_size_evo']} combinations")
+    logger.info(f"  Max Hydra strength (no evo): {summary['max_hydra_strength']:.1f}")
     if "critical_prey_birth" in summary:
-        logger.info(f"Closest to criticality:")
+        logger.info(f"Closest to SOC criticality (τ=2.05):")
         logger.info(f"  prey_birth = {summary['critical_prey_birth']:.3f}")
-        logger.info(f"  pred_death = {summary['critical_pred_death']:.3f}")
-        logger.info(
-            f"  τ_prey = {summary['critical_tau_prey']:.3f}, τ_pred = {summary['critical_tau_pred']:.3f}"
-        )
+        logger.info(f"  prey_death = {summary['critical_prey_death']:.3f}")
+        logger.info(f"  τ_prey = {summary['critical_tau_prey']:.3f}")
 
 
 # =============================================================================
@@ -818,7 +902,7 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="PP Evolutionary Analysis")
+    parser = argparse.ArgumentParser(description="PP Evolutionary Analysis - Prey Hydra Effect")
     parser.add_argument(
         "--mode",
         type=str,
@@ -835,14 +919,14 @@ def main():
     parser.add_argument(
         "--dry-run", action="store_true", help="Print estimated runtime and exit"
     )
-    
+
     parser.add_argument(
-        "--async", 
-        action="store_false", 
-        dest="synchronous", 
+        "--async",
+        action="store_false",
+        dest="synchronous",
         help="Run simulation in asynchronous (random-sequential) mode"
     )
-    
+
     args = parser.parse_args()
 
     # Setup
@@ -868,11 +952,14 @@ def main():
 
     # Header
     logger.info("=" * 60)
-    logger.info("PP Evolutionary Analysis")
+    logger.info("PP Evolutionary Analysis - PREY HYDRA EFFECT")
     logger.info("=" * 60)
     logger.info(f"Mode: {args.mode}")
     logger.info(f"Output: {output_dir}")
     logger.info(f"Cores: {cfg.n_jobs}")
+    logger.info(f"Update mode: {'synchronous' if cfg.synchronous else 'asynchronous'}")
+    logger.info(f"Fixed predator_death: {cfg.predator_death}")
+    logger.info(f"Evolving: prey_death (SD={cfg.evolve_sd}, bounds=[{cfg.evolve_min}, {cfg.evolve_max}])")
 
     n_cores = cfg.n_jobs if cfg.n_jobs > 0 else os.cpu_count()
     logger.info(f"Estimated: {cfg.estimate_runtime(n_cores)}")
