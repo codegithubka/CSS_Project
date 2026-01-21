@@ -18,7 +18,7 @@ from pathlib import Path
 # Import and modify config before running
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pp_analysis import Config, main, run_2d_sweep, run_sensitivity, run_fss, generate_plots
+from scripts.pp_analysis import Config, main, run_2d_sweep, run_sensitivity, run_fss, generate_plots
 import logging
 import argparse
 

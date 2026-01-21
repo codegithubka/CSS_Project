@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch, MagicMock
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from pp_analysis import (
+from scripts.pp_analysis import (
     Config,
     count_populations,
     measure_cluster_sizes,

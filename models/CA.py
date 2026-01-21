@@ -8,6 +8,8 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
+from scripts.numba_optimized import _pp_async_kernel
+from numba import njit
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -16,6 +18,10 @@ logger = logging.getLogger(__name__)
 # repeated imports and small array allocations in hot paths.
 _cached_ndimage = None
 _cached_kernels = {}
+
+@njit
+def set_numba_seed(value):
+	np.random.seed(value)
 
 class CA:
 	"""Base cellular automaton class.
@@ -881,6 +887,10 @@ class PP(CA):
 		self.synchronous: bool = bool(synchronous)
 		# set human-friendly species names for PP
 		self.species_names = ("prey", "predator")
+  
+		if seed is not None:
+			# This sets the seed for all @njit functions globally
+			set_numba_seed(seed)
 
 
 	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
@@ -1165,70 +1175,32 @@ class PP(CA):
 		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
-		"""Asynchronous (random-sequential) update.
+		dr_arr, dc_arr, _ = self._neighbor_shifts()
+		
+		# Get the evolved prey death map
+		# Fallback to a full array of the global param if it doesn't exist yet
+		p_death_arr = self.cell_params.get("prey_death")
+		if p_death_arr is None:
+			p_death_arr = np.full(self.grid.shape, self.params["prey_death"])
 
-		Rules (applied using a copy of the current grid for reference):
-		- Iterate occupied cells in random order.
-		- Prey (1): pick random neighbor; if neighbor was empty in copy,
-		  reproduce into it with probability `prey_birth`.
-		- Predator (2): pick random neighbor; if neighbor was prey in copy,
-		  reproduce into it (convert to predator) with probability `predator_birth`.
-		- After the reproduction loop, apply deaths synchronously using the
-		  copy as the reference so newly created individuals are not instantly
-		  killed. Deaths only remove individuals if the current cell still
-		  matches the species from the reference copy.
-		"""
-		# Bind hot attributes to locals for speed and clarity
-		grid = self.grid
-		gen = self.generator
-		params = self.params
-		cell_params = self.cell_params
-		rows, cols = grid.shape
-		grid_ref = grid.copy()
+		meta = self._evolve_info.get("prey_death", {"sd": 0.05, "min": 0.001, "max": 0.1})
 
-		# Sample and apply deaths first (based on the reference grid). Deaths
-		# are sampled from `grid_ref` so statistics remain identical.
-		rand_prey = gen.random(grid.shape)
-		rand_pred = gen.random(grid.shape)
-		self._apply_deaths_and_clear_params(grid_ref, rand_prey, rand_pred)
-
-		# Precompute neighbor shifts
-		dr_arr, dc_arr, n_shifts = self._neighbor_shifts()
-
-		# Get occupied cells from the original reference grid and shuffle.
-		# We iterate over `grid_ref` so that sources can die and reproduce
-		# in the same iteration, meaning we are order-agnostic.
-		occupied = np.argwhere(grid_ref != 0)
-		if occupied.size > 0:
-			order = gen.permutation(len(occupied))
-			for idx in order:
-				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
-				state = int(grid_ref[r, c])
-				# pick a random neighbor shift
-				nbi = int(gen.integers(0, n_shifts))
-				dr = int(dr_arr[nbi])
-				dc = int(dc_arr[nbi])
-				nr = (r + dr) % rows
-				nc = (c + dc) % cols
-				if state == 1:
-					# Prey reproduces into empty neighbor (reference must be empty)
-					if grid_ref[nr, nc] == 0:
-						# per-parent birth prob
-						pval = self._get_parent_probs(np.array([[r, c]]), "prey_birth", float(params["prey_birth"]))[0]
-						if gen.random() < float(pval):
-							# birth: set new prey and inherit per-cell params (if any)
-							grid[nr, nc] = 1
-							# handle param clearing/inheritance for a single birth
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 1)
-				elif state == 2:
-					# Predator reproduces into prey neighbor (reference must be prey)
-					if grid_ref[nr, nc] == 1:
-						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(params["predator_birth"]))[0]
-						if gen.random() < float(pval):
-							# predator converts prey -> predator: assign and handle params
-							grid[nr, nc] = 2
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 2)
-
+		# Call the JIT kernel
+		self.grid = _pp_async_kernel(
+			self.grid,
+			p_death_arr,
+			float(self.params["prey_birth"]),
+			float(self.params["prey_death"]),
+			float(self.params["predator_birth"]),
+			float(self.params["predator_death"]),
+			dr_arr.astype(np.int32),
+			dc_arr.astype(np.int32),
+			float(meta["sd"]),
+			float(meta["min"]),
+			float(meta["max"]),
+			self._evolution_stopped
+		)
+    
 	def update(self) -> None:
 		"""Dispatch to synchronous or asynchronous update mode."""
 		if self.synchronous:

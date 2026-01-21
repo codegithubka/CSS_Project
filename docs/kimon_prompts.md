@@ -39,5 +39,15 @@
 7. Add PCF analysis functonality for prey auto, predator auto and cross correlation. Also, integrate the snapshot method from the CA clas as an optional functionality of the analysis module. Add the folowing plots: 1. phase diagrams showing segregation, prey-clusterin, and predator clustering. Scatter plots tetsing if Hydra effect correlates with spatial segregation, and CA-style snapshots, neighbor histogram, and evolution trajectory.
 
 
-8. Help me create a testing module for the analysis file. Use unittest.mock to create a mock model for testing.
+8. Help me create a testing module for the analysis file. Use unittest.mock to create a mock model for testing. If you lie or falsify tests so that they pass my script, you will be replaced.
+
+
+9. Add a larger scale simulation in the testing file to verify plots are as desired.
+
+---
+
+### Script Optimization\
+
+
+1. I am considering using numba for optimization and faster runs in the HPC. Outline an implementation plan, practical considerations, and feasibility within a logical timeframe.
 

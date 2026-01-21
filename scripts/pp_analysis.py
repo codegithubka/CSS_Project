@@ -33,6 +33,17 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
 
+try:
+    from scripts.numba_optimized import (
+        compute_pcf_periodic_fast,
+        compute_all_pcfs_fast,
+        measure_cluster_sizes_fast,
+        NUMBA_AVAILABLE
+    )
+    USE_NUMBA = NUMBA_AVAILABLE
+except ImportError:
+    USE_NUMBA = False
+
 import numpy as np
 from scipy import ndimage
 from scipy.optimize import curve_fit
@@ -40,26 +51,12 @@ from scipy.ndimage import gaussian_filter1d
 
 warnings.filterwarnings("ignore")
 
-
 # Config
 
 @dataclass
 class Config:
     """
     Central configuration; CPU budget adjustable.
-    RESOURCE PROFILES:
-    -----------------
-    MINIMAL (~15 core-hours):
-        n_prey_birth=10, n_prey_death=10, n_replicates=15, default_grid=100
-
-    STANDARD (~40 core-hours):
-        n_prey_birth=15, n_prey_death=15, n_replicates=25, default_grid=100
-
-    HIGH-QUALITY (~80 core-hours):
-        n_prey_birth=15, n_prey_death=15, n_replicates=25, default_grid=150
-
-    PUBLICATION (~150 core-hours):
-        n_prey_birth=20, n_prey_death=20, n_replicates=30, default_grid=150
     """
     
     # Grid setting
@@ -250,12 +247,17 @@ def collect_comprehensive_metrics(model, step: int) -> Dict:
 
 def measure_cluster_sizes(grid: np.ndarray, species: int) -> np.ndarray:
     """Extract cluster sizes using 4-connected component analysis."""
+    if USE_NUMBA:
+        return measure_cluster_sizes_fast(grid, species)
+    
+    # Fallback to scipy
     binary_mask = (grid == species).astype(int)
     structure = np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]])
     labeled, n = ndimage.label(binary_mask, structure=structure)
     if n == 0:
         return np.array([], dtype=int)
     return np.array(ndimage.sum(binary_mask, labeled, range(1, n + 1)), dtype=int)
+
 
 def get_evolved_stats(model, param: str) -> Dict:
     """Get statistics of evolved parameter from model."""
@@ -424,6 +426,9 @@ def compute_all_pcfs(
             'pred_pred': (distances, C_cc, n_pairs)
             'prey_pred': (distances, C_cr, n_pairs)
     """
+    if USE_NUMBA:
+        return compute_all_pcfs_fast(grid, max_distance, n_bins)
+    
     rows, cols = grid.shape
     if max_distance is None:
         max_distance = min(rows, cols) / 4.0
@@ -1749,6 +1754,7 @@ def main():
     logger.info(f"Update rule: {'synchronous' if cfg.synchronous else 'asynchronous'}")
     logger.info(f"Predator params: death={cfg.predator_death}, birth={cfg.predator_birth}")
     logger.info(f"Evolving: prey_death (SD={cfg.evolve_sd}, bounds=[{cfg.evolve_min}, {cfg.evolve_max}])")
+    logger.info(f"Numba acceleration: {'ENABLED' if USE_NUMBA else 'DISABLED'}")
     
     if cfg.collect_neighbor_stats:
         logger.info("Enhanced: Collecting neighbor statistics")
