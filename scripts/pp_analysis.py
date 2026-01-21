@@ -80,8 +80,8 @@ class Config:
     # Simulation length
     warmup_steps: int = 200
     measurement_steps: int = 300
-    cluster_samples: int = 40
-    cluster_interval: int = 8
+    cluster_samples: int = 10
+    cluster_interval: int = 100 
     
     # Ecological parameters
     evolve_sd: float = 0.10
