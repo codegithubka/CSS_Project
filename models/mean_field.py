@@ -182,10 +182,6 @@ class MeanFieldModel:
             "net_growth": self.birth - d_r_values,
         }
 
-
-# FIXME: Add plotting utilities
-
-
 if __name__ == "__main__":
     print("Mean-Field Model Module")
     mf = MeanFieldModel()

@@ -20,6 +20,8 @@
 
 1. Create a comprehensive testing suite for the CA and PP classes. Test initialization, async update changes, synchronous update changes, prey growth in isolation behavior, predator starvation, parameter evolution and long run dynamics. Also make sur ethe test_viz mehtod works as desired
 
+---
+
 ### Parameter Sweep and PP Class Analysis
 
 2. Create a skeletal version of a .py script that will be subimtted into Snellius for parameter analysis. The purpose of this script should be to identify power law distribution with the consideration of finite size scaling, the hydra effect, and suitable parameter configurtaions for time series analysis for model evolution. Compare the non-evo to the evo model.
@@ -30,4 +32,6 @@
 4. Add configuration option to run the asynchronous version of the CA class. The synchronous functionality should also be preserved. Provide me with a small smoke test to see if the updated file runs as expected.
 
 5. Create a minimal bash script for Snellius. Use the rome configiuration.
+
+6. Fix predator-prey analysis script so that the hydra effect focuses on the prey hydra effect as a result of the increasing prey death rate.
 

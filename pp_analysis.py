@@ -110,7 +110,8 @@ class Config:
     # Parallel settings
     n_jobs: int = -1  # -1 = all available cores
 
-    synchronous: bool = True  # Use synchronous/async updates
+    # Update mode (False = asynchronous/random-sequential, matches Gillespie)
+    synchronous: bool = False
 
     def get_prey_births(self) -> np.ndarray:
         return np.linspace(self.prey_birth_min, self.prey_birth_max, self.n_prey_birth)
@@ -921,10 +922,10 @@ def main():
     )
 
     parser.add_argument(
-        "--async",
-        action="store_false",
+        "--sync",
+        action="store_true",
         dest="synchronous",
-        help="Run simulation in asynchronous (random-sequential) mode"
+        help="Run simulation in synchronous mode (default is asynchronous)"
     )
 
     args = parser.parse_args()
@@ -957,7 +958,7 @@ def main():
     logger.info(f"Mode: {args.mode}")
     logger.info(f"Output: {output_dir}")
     logger.info(f"Cores: {cfg.n_jobs}")
-    logger.info(f"Update mode: {'synchronous' if cfg.synchronous else 'asynchronous'}")
+    logger.info(f"Update rule: {'synchronous' if cfg.synchronous else 'asynchronous (random-sequential)'}")
     logger.info(f"Fixed predator_death: {cfg.predator_death}")
     logger.info(f"Evolving: prey_death (SD={cfg.evolve_sd}, bounds=[{cfg.evolve_min}, {cfg.evolve_max}])")
 
