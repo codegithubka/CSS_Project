@@ -1,12 +1,12 @@
 ### Snellius Usage Breakdown
 
 ```
-ssh <your_username>@snellius.surf.nl
+ssh kanagnostopoul@snellius.surf.nl
 
 # On a separate terminal run the following
 
 # Upload the entire project directory (including your models/ folder)
-scp -r ~/Documents/CSS_Project <your_username>@snellius.surf.nl:~/
+scp -r ~/CSS_Project kanagnostopoul@snellius.surf.nl:~/
 
 # On the Snellius terminal
 
@@ -41,7 +41,7 @@ tail -f logs_<JOBID>.err
 
 # Fetching the results once the job is done
 
-scp -r <your_username>@snellius.surf.nl:~/results_18514601 ~/Downloads/
+scp -r kanagnostopoul@snellius.surf.nl:~/results_18532145 ~/Downloads/
 ```
 
 The jobscript template can be found in ```run_analysis.sh``` (default rome paritition).

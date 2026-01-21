@@ -35,3 +35,9 @@
 
 6. Fix predator-prey analysis script so that the hydra effect focuses on the prey hydra effect as a result of the increasing prey death rate.
 
+
+7. Add PCF analysis functonality for prey auto, predator auto and cross correlation. Also, integrate the snapshot method from the CA clas as an optional functionality of the analysis module. Add the folowing plots: 1. phase diagrams showing segregation, prey-clusterin, and predator clustering. Scatter plots tetsing if Hydra effect correlates with spatial segregation, and CA-style snapshots, neighbor histogram, and evolution trajectory.
+
+
+8. Help me create a testing module for the analysis file. Use unittest.mock to create a mock model for testing.
+
