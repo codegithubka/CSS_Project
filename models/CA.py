@@ -12,6 +12,10 @@ import logging
 # Module logger
 logger = logging.getLogger(__name__)
 
+# Module-level cache for scipy.ndimage and neighborhood kernels to avoid
+# repeated imports and small array allocations in hot paths.
+_cached_ndimage = None
+_cached_kernels = {}
 
 class CA:
 	"""Base cellular automaton class.
@@ -27,6 +31,44 @@ class CA:
 
 	# Default colormap spec (string or sequence); resolved in `visualize` at runtime
 	_default_cmap = "viridis"
+
+	# Read-only accessors for size/densities (protected attributes set in __init__)
+	@property
+	def rows(self) -> int:
+		return getattr(self, "_rows")
+
+	@property
+	def cols(self) -> int:
+		return getattr(self, "_cols")
+
+	@property
+	def densities(self) -> Tuple[float, ...]:
+		return tuple(getattr(self, "_densities"))
+
+	# make n_species protected with read-only property
+	@property
+	def n_species(self) -> int:
+		return int(getattr(self, "_n_species"))
+
+	def validate(self) -> None:
+		"""Validate core CA invariants.
+
+		Checks that `neighborhood` is valid, that `self.grid` has the
+	texpected shape `(rows, cols)`, and that any numpy arrays in
+	`self.cell_params` have matching shapes. Raises `ValueError` on
+	validation failure.
+		"""
+		if self.neighborhood not in ("neumann", "moore"):
+			raise ValueError("neighborhood must be 'neumann' or 'moore'")
+
+		expected_shape = (int(getattr(self, "_rows")), int(getattr(self, "_cols")))
+		if self.grid.shape != expected_shape:
+			raise ValueError(f"grid shape {self.grid.shape} does not match expected {expected_shape}")
+
+		# Ensure any array in cell_params matches grid shape
+		for k, v in (self.cell_params or {}).items():
+			if isinstance(v, np.ndarray) and v.shape != expected_shape:
+				raise ValueError(f"cell_params['{k}'] must have shape equal to grid")
 
 	def __init__(
 		self,
@@ -64,7 +106,11 @@ class CA:
 		assert total_density <= 1.0 + 1e-12, "sum of densities must not exceed 1"
 		assert neighborhood in ("neumann", "moore"), "neighborhood must be 'neumann' or 'moore'"
 
-		self.n_species: int = len(densities)
+		self._n_species: int = len(densities)
+		# store protected size/density attributes (read-only properties exposed)
+		self._rows: int = rows
+		self._cols: int = cols
+		self._densities: Tuple[float, ...] = tuple(densities)
 		self.params: Dict[str, object] = dict(params) if params is not None else {}
 		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
 		self.neighborhood: str = neighborhood
@@ -104,18 +150,27 @@ class CA:
 		"""
 		counts = []
 		# Require SciPy for neighbor counting (fast and reliable); fail fast if missing
-		try:
-			from scipy import ndimage
-		except ImportError as e:
-			# SciPy is required for correct and performant neighbor counting
-			raise ImportError("scipy is required for count_neighbors(); install scipy") from e
+		global _cached_ndimage, _cached_kernels
+		if _cached_ndimage is None:
+			try:
+				from scipy import ndimage as _ndimage
+			except ImportError as e:
+				# SciPy is required for correct and performant neighbor counting
+				raise ImportError("scipy is required for count_neighbors(); install scipy") from e
+			_cached_ndimage = _ndimage
 
-		if self.neighborhood == "neumann":
-			# Neumann (4-neighbors)
-			kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=int)
-		else:
-			# Moore (8-neighbors)
-			kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=int)
+		ndimage = _cached_ndimage
+
+		# Cache kernel arrays per neighborhood to avoid reallocating each call
+		kernel = _cached_kernels.get(self.neighborhood)
+		if kernel is None:
+			if self.neighborhood == "neumann":
+				# Neumann (4-neighbors)
+				kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=int)
+			else:
+				# Moore (8-neighbors)
+				kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=int)
+			_cached_kernels[self.neighborhood] = kernel
 
 		for state in range(1, self.n_species + 1):
 			mask = (self.grid == state).astype(int)
@@ -145,26 +200,10 @@ class CA:
 		"""
 		assert isinstance(steps, int) and steps >= 0, "steps must be a non-negative integer"
 
-		# One-time validation for per-cell evolved parameters (if present).
-		# For performance, PP.update_* assumes that any per-cell parameter
-		# arrays in `self.cell_params` have already been validated to:
-		# - be numpy arrays of the same shape as `self.grid`, and
-		# - have non-NaN entries exactly at the positions occupied by the
-		#   corresponding species (e.g. `prey_death` non-NaNs at prey cells).
-		# If this object defines `_evolve_info`, perform those checks once
-		# before the run loop so updates can be fast.
-		if hasattr(self, "_evolve_info") and isinstance(self._evolve_info, dict):
-			for pname in self._evolve_info.keys():
-				cp_arr = self.cell_params.get(pname)
-				if isinstance(cp_arr, np.ndarray):
-					if cp_arr.shape != self.grid.shape:
-						raise ValueError(f"cell_params['{pname}'] must have shape equal to grid")
-					# expected non-NaN positions correspond to species in grid
-					species = 1 if pname.startswith("prey_") else 2
-					nonnan = ~np.isnan(cp_arr)
-					expected = (self.grid == species)
-					if not np.array_equal(nonnan, expected):
-						raise ValueError(f"cell_params['{pname}'] non-NaN entries must match positions of species {species} in the grid")
+		# NOTE: validation of `cell_params` and evolved parameters has been
+		# moved to the `validate()` method on the class. The run loop no
+		# longer performs per-cell validation for performance; call
+		# `validate()` explicitly when needed.
 
 		# normalize snapshot iteration list
 		snapshot_set = set(snapshot_iters) if snapshot_iters is not None else set()
@@ -210,7 +249,8 @@ class CA:
 		cmap=None,
 		show_cell_params: bool = False,
 		show_neighbors: bool = True,
-	) -> None:
+		downsample: Optional[int] = None,
+		) -> None:
 		"""Enable interactive visualization of the grid.
 
 		Args:
@@ -232,6 +272,9 @@ class CA:
 		except ImportError as e:
 			# Matplotlib is required for interactive visualization
 			raise ImportError("matplotlib is required for visualize(); install matplotlib") from e
+
+		# Keep a reference to pyplot so _viz_update can use it without importing
+		self._viz_plt = plt
 
 		# Resolve default cmap: prefer instance attribute override
 		c_spec = self._default_cmap if cmap is None else cmap
@@ -316,7 +359,13 @@ class CA:
 		# determine downsampling factor for display to limit pixels drawn
 		rows, cols = self.grid.shape
 		_max_display = 300
-		_ds = max(1, int(max(rows, cols) / _max_display))
+		# default automatic downsample chosen from grid size
+		_ds_auto = max(1, int(max(rows, cols) / _max_display))
+		# allow caller to override with explicit downsample factor
+		if downsample is None:
+			_ds = _ds_auto
+		else:
+			_ds = max(1, int(downsample))
 		# initialize histogram: compute neighbor counts for prey
 		n_neighbors = 4 if self.neighborhood == "neumann" else 8
 		counts = self.count_neighbors()[0]
@@ -495,6 +544,8 @@ class CA:
 		self._viz_snapshot_dir = None
 		# downsample factor used for display
 		self._viz_ds = _ds
+		# precompute a slice tuple for downsampled display indexing
+		self._viz_slice = (slice(None, None, _ds), slice(None, None, _ds))
 
 		plt.show(block=False)
 		# draw once to populate the renderer
@@ -527,7 +578,8 @@ class CA:
 		if (iteration % int(self._viz_interval)) != 0:
 			return
 
-		import matplotlib.pyplot as plt
+		# pyplot is provided via visualize(); avoid importing here for performance
+		plt = getattr(self, "_viz_plt", None)
 
 		# update figure title
 		try:
@@ -541,12 +593,15 @@ class CA:
 			return
 		im_states = art.get("im_states")
 		_ds = getattr(self, "_viz_ds", 1)
+		# bind grid locally for faster access
+		grid = self.grid
 		if im_states is not None:
-			im_states.set_data(self.grid[::_ds, ::_ds])
+			_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
+			im_states.set_data(grid[_vslice])
 
 		# update histogram of prey neighbor counts
 		counts = self.count_neighbors()[0]
-		prey_mask = (self.grid == 1)
+		prey_mask = (grid == 1)
 		if np.any(prey_mask):
 			vals = counts[prey_mask]
 		else:
@@ -568,8 +623,8 @@ class CA:
 
 		# update time series data (append)
 		self._viz_time.append(iteration)
-		prey_count = int(np.count_nonzero(self.grid == 1))
-		pred_count = int(np.count_nonzero(self.grid == 2))
+		prey_count = int(np.count_nonzero(grid == 1))
+		pred_count = int(np.count_nonzero(grid == 2))
 		self._viz_prey_counts.append(prey_count)
 		self._viz_pred_counts.append(pred_count)
 		self._viz_neighbor_stats["25"].append(p25)
@@ -622,8 +677,8 @@ class CA:
 				if arr is None:
 					arr = np.full(self.grid.shape, np.nan)
 				# update downsampled display array only
-				_ds = getattr(self, "_viz_ds", 1)
-				im.set_data(arr[::_ds, ::_ds])
+				_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
+				im.set_data(arr[_vslice])
 				# do not call colorbar update here (vmin/vmax fixed)
 				# compute stats for plotting in param_ts (cheap)
 				try:
@@ -693,7 +748,12 @@ class CA:
 				except Exception:
 					pass
 			# small pause to let GUI update
-			plt.pause(self._viz_pause)
+			if plt is not None:
+				plt.pause(self._viz_pause)
+			else:
+				# fallback: small sleep if pyplot not available
+				import time
+				time.sleep(float(self._viz_pause))
 		else:
 			# fallback: full draw
 			try:
@@ -703,7 +763,11 @@ class CA:
 					self._viz_fig.canvas.draw_idle()
 				except Exception:
 					pass
-			plt.pause(self._viz_pause)
+			if plt is not None:
+				plt.pause(self._viz_pause)
+			else:
+				import time
+				time.sleep(float(self._viz_pause))
 
 
 class PP(CA):
@@ -774,7 +838,7 @@ class PP(CA):
 		self._evolve_info: Dict[str, Dict[str, float]] = {}
 
 
-	def evolve(self, param: str, sd: float = 0.05, min: float = 0.01, max: float = 0.99) -> None:
+	def evolve(self, param: str, sd: float = 0.05, min_val: Optional[float] = None, max_val: Optional[float] = None) -> None:
 		"""Enable per-cell evolution for a given parameter.
 
 		Creates a per-cell array in `self.cell_params[param]` with the same
@@ -789,6 +853,13 @@ class PP(CA):
 		- min: minimum clipped value after mutation
 		- max: maximum clipped value after mutation
 		"""
+		# Note: deprecated keyword names `min` and `max` have been removed.
+		# Callers must use `min_val` and `max_val` explicitly.
+		# Provide sensible defaults when not specified
+		if min_val is None:
+			min_val = 0.01
+		if max_val is None:
+			max_val = 0.99
 		if param not in self.params:
 			raise ValueError(f"Unknown parameter '{param}'")
 
@@ -805,7 +876,48 @@ class PP(CA):
 		mask = (self.grid == species)
 		arr[mask] = float(self.params[param])
 		self.cell_params[param] = arr
-		self._evolve_info[param] = {"sd": float(sd), "min": float(min), "max": float(max)}
+		self._evolve_info[param] = {"sd": float(sd), "min": float(min_val), "max": float(max_val)}
+
+	def validate(self) -> None:
+		"""Validate PP-specific invariants in addition to base CA checks.
+
+		Checks:
+		- each global parameter is numeric and in [0,1]
+		- per-cell evolved parameter arrays (in `_evolve_info`) have non-NaN
+		  positions matching the species grid and contain values within the
+		  configured min/max range (or are NaN).
+		"""
+		super().validate()
+
+		# Validate global params
+		for k, v in (self.params or {}).items():
+			if not isinstance(v, (int, float)):
+				raise TypeError(f"Parameter '{k}' must be numeric")
+			if not (0.0 <= float(v) <= 1.0):
+				raise ValueError(f"Parameter '{k}' must be between 0 and 1")
+
+		# Validate per-cell evolve arrays
+		for pname, meta in (self._evolve_info or {}).items():
+			arr = self.cell_params.get(pname)
+			if not isinstance(arr, np.ndarray):
+				# absent or non-array per-cell params are allowed; skip
+				continue
+			# shape already checked in super().validate(), but be explicit
+			if arr.shape != self.grid.shape:
+				raise ValueError(f"cell_params['{pname}'] must match grid shape")
+			# expected non-NaN positions correspond to species in grid
+			species = 1 if pname.startswith("prey_") else 2
+			nonnan = ~np.isnan(arr)
+			expected = (self.grid == species)
+			if not np.array_equal(nonnan, expected):
+				raise ValueError(f"cell_params['{pname}'] non-NaN entries must match positions of species {species}")
+			# values must be within configured range where not NaN
+			mn = float(meta.get("min", 0.0))
+			mx = float(meta.get("max", 1.0))
+			vals = arr[~np.isnan(arr)]
+			if vals.size > 0:
+				if np.any(vals < mn) or np.any(vals > mx):
+					raise ValueError(f"cell_params['{pname}'] contains values outside [{mn}, {mx}]")
 
 	def _apply_deaths_and_clear_params(self, grid_ref: np.ndarray, rand_prey: np.ndarray, rand_pred: np.ndarray) -> None:
 		"""Apply deaths based on sampled random arrays and clear per-cell params.
@@ -831,7 +943,7 @@ class PP(CA):
 		self.grid[pred_death_mask] = 0
 
 		# Clear per-cell parameters for dead individuals
-		for pname in list(self._evolve_info.keys()):
+		for pname in self._evolve_info:
 			if pname.startswith("prey_"):
 				arr = self.cell_params.get(pname)
 				if isinstance(arr, np.ndarray) and arr.shape == self.grid.shape:
@@ -900,6 +1012,10 @@ class PP(CA):
 			mx = float(meta["max"])
 			mut = parent_vals + self.generator.normal(0.0, sd, size=parent_vals.shape)
 			mut = np.clip(mut, mn, mx)
+			# If an array exists but has wrong shape, raise an informative error
+			existing = self.cell_params.get(pname)
+			if isinstance(existing, np.ndarray) and existing.shape != self.grid.shape:
+				raise ValueError(f"cell_params['{pname}'] must have shape equal to grid")
 			if pname not in self.cell_params or not isinstance(self.cell_params[pname], np.ndarray):
 				self.cell_params[pname] = np.full(self.grid.shape, np.nan)
 			self.cell_params[pname][chosen_rs, chosen_cs] = mut
@@ -922,12 +1038,17 @@ class PP(CA):
 		# well-formed and correspond to the current grid. `run()` performs a
 		# one-time validation before the update loop; update methods do not
 		# re-check for performance reasons.
-		rows, cols = self.grid.shape
-		grid_ref = self.grid.copy()
+		# Bind hot attributes to locals for performance and clarity
+		grid = self.grid
+		gen = self.generator
+		params = self.params
+		cell_params = self.cell_params
+		rows, cols = grid.shape
+		grid_ref = grid.copy()
 
 		# Sample deaths and apply them (clears per-cell params for dead individuals)
-		rand_prey = self.generator.random(self.grid.shape)
-		rand_pred = self.generator.random(self.grid.shape)
+		rand_prey = gen.random(grid.shape)
+		rand_pred = gen.random(grid.shape)
 		self._apply_deaths_and_clear_params(grid_ref, rand_prey, rand_pred)
 
 		# Precompute neighbor shifts and arrays for indexing (used by reproduction)
@@ -949,7 +1070,7 @@ class PP(CA):
 			parent_probs = self._get_parent_probs(sources, birth_param_key, birth_prob)
 
 			# Which sources attempt reproduction
-			attempt_mask = self.generator.random(M) < parent_probs
+			attempt_mask = gen.random(M) < parent_probs
 			if not np.any(attempt_mask):
 				return
 
@@ -957,7 +1078,7 @@ class PP(CA):
 			K = src.shape[0]
 
 			# Each attempting source picks one neighbor uniformly
-			nbr_idx = self.generator.integers(0, n_shifts, size=K)
+			nbr_idx = gen.integers(0, n_shifts, size=K)
 			nr = (src[:, 0] + dr_arr[nbr_idx]) % rows
 			nc = (src[:, 1] + dc_arr[nbr_idx]) % cols
 
@@ -986,7 +1107,7 @@ class PP(CA):
 			# idx_start gives indices into the sorted array
 			chosen_sorted_positions = []
 			for start, cnt in zip(idx_start, counts):
-				off = int(self.generator.integers(0, cnt))
+				off = int(gen.integers(0, cnt))
 				chosen_sorted_positions.append(start + off)
 			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
 
@@ -1000,8 +1121,8 @@ class PP(CA):
 			# Determine parent positions corresponding to chosen attempts
 			parents = src_valid[chosen_indices]
 
-			# Apply successful births to the main grid
-			self.grid[chosen_rs, chosen_cs] = new_state_val
+			# Apply successful births to the main grid (grid is alias of self.grid)
+			grid[chosen_rs, chosen_cs] = new_state_val
 
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, new_state_val)
@@ -1028,18 +1149,18 @@ class PP(CA):
 		  killed. Deaths only remove individuals if the current cell still
 		  matches the species from the reference copy.
 		"""
-		rows, cols = self.grid.shape
-		grid_ref = self.grid.copy()
-
-		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
-		# well-formed and correspond to the current grid. `run()` performs a
-		# one-time validation before the update loop; update methods do not
-		# re-check for performance reasons.
+		# Bind hot attributes to locals for speed and clarity
+		grid = self.grid
+		gen = self.generator
+		params = self.params
+		cell_params = self.cell_params
+		rows, cols = grid.shape
+		grid_ref = grid.copy()
 
 		# Sample and apply deaths first (based on the reference grid). Deaths
 		# are sampled from `grid_ref` so statistics remain identical.
-		rand_prey = self.generator.random(self.grid.shape)
-		rand_pred = self.generator.random(self.grid.shape)
+		rand_prey = gen.random(grid.shape)
+		rand_pred = gen.random(grid.shape)
 		self._apply_deaths_and_clear_params(grid_ref, rand_prey, rand_pred)
 
 		# Precompute neighbor shifts
@@ -1050,12 +1171,12 @@ class PP(CA):
 		# in the same iteration, meaning we are order-agnostic.
 		occupied = np.argwhere(grid_ref != 0)
 		if occupied.size > 0:
-			order = self.generator.permutation(len(occupied))
+			order = gen.permutation(len(occupied))
 			for idx in order:
 				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
 				state = int(grid_ref[r, c])
 				# pick a random neighbor shift
-				nbi = int(self.generator.integers(0, n_shifts))
+				nbi = int(gen.integers(0, n_shifts))
 				dr = int(dr_arr[nbi])
 				dc = int(dc_arr[nbi])
 				nr = (r + dr) % rows
@@ -1064,19 +1185,19 @@ class PP(CA):
 					# Prey reproduces into empty neighbor (reference must be empty)
 					if grid_ref[nr, nc] == 0:
 						# per-parent birth prob
-						pval = self._get_parent_probs(np.array([[r, c]]), "prey_birth", float(self.params["prey_birth"]))[0]
-						if self.generator.random() < float(pval):
+						pval = self._get_parent_probs(np.array([[r, c]]), "prey_birth", float(params["prey_birth"]))[0]
+						if gen.random() < float(pval):
 							# birth: set new prey and inherit per-cell params (if any)
-							self.grid[nr, nc] = 1
+							grid[nr, nc] = 1
 							# handle param clearing/inheritance for a single birth
 							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 1)
 				elif state == 2:
 					# Predator reproduces into prey neighbor (reference must be prey)
 					if grid_ref[nr, nc] == 1:
-						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(self.params["predator_birth"]))[0]
-						if self.generator.random() < float(pval):
+						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(params["predator_birth"]))[0]
+						if gen.random() < float(pval):
 							# predator converts prey -> predator: assign and handle params
-							self.grid[nr, nc] = 2
+							grid[nr, nc] = 2
 							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 2)
 
 	def update(self) -> None:

@@ -59,22 +59,22 @@ def test_neighborhood_counting():
                 assert neigh[r, c] == 0
 
 
-def test_run_detects_cell_params_shape_and_nonnan_mismatch():
+def test_validate_detects_cell_params_shape_and_nonnan_mismatch():
     # create a PP and enable evolution for a parameter
     pp = PP(rows=5, cols=5, densities=(0.2, 0.1), neighborhood="moore", params=None, cell_params=None, seed=2)
-    pp.evolve("prey_death", sd=0.01, min=0.0, max=1.0)
+    pp.evolve("prey_death", sd=0.01, min_val=0.0, max_val=1.0)
 
-    # wrong shape should raise informative ValueError during run()
+    # wrong shape should raise informative ValueError via validate()
     pp.cell_params["prey_death"] = np.zeros((1, 1))
     with pytest.raises(ValueError) as excinfo:
-        pp.run(1)
+        pp.validate()
     assert "shape equal to grid" in str(excinfo.value)
 
     # now create a same-shaped array but with non-NaN positions that don't match prey positions
     arr = np.zeros(pp.grid.shape, dtype=float)  # filled with non-NaN everywhere
     pp.cell_params["prey_death"] = arr
     with pytest.raises(ValueError) as excinfo2:
-        pp.run(1)
+        pp.validate()
     assert "non-NaN entries must match positions" in str(excinfo2.value)
 
 

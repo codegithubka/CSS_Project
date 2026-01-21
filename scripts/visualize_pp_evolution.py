@@ -27,7 +27,7 @@ def main():
 
     # Enable per-cell evolution for prey death rates. Use a small sd and
     # reasonable clipping bounds so values remain in (0.001, 0.2).
-    pp.evolve("prey_death", sd=0.1, min=0.001, max=0.2)
+    pp.evolve("prey_death", sd=0.1, min_val=0.001, max_val=0.2)
 
     # Start interactive visualization: update every 10 iterations
     # Do not show neighbor histogram/percentile plots to reduce overhead
