@@ -59,7 +59,7 @@ def set_numba_seed(seed: int) -> None:
     np.random.seed(seed)
     
 @njit(cache=True)
-def _pp_async_kernel(
+def _pp_async_kernel_random(
     grid: np.ndarray,
     prey_death_arr: np.ndarray,
     p_birth_val: float,
@@ -147,6 +147,130 @@ def _pp_async_kernel(
     return grid
 
 
+
+@njit(cache=True)
+def _pp_async_kernel_directed(
+    grid: np.ndarray,
+    prey_death_arr: np.ndarray,
+    p_birth_val: float,
+    p_death_val: float,
+    pred_birth_val: float,
+    pred_death_val: float,
+    dr_arr: np.ndarray,
+    dc_arr: np.ndarray,
+    evolve_sd: float,
+    evolve_min: float,
+    evolve_max: float,
+    evolution_stopped: bool,
+    occupied_buffer: np.ndarray,
+) -> np.ndarray:
+    """
+    Async predator prey update kernel with directed hunting.
+    
+    Prdators check all neighbors for prey, move towards one if found.
+    
+    """
+    rows, cols = grid.shape
+    n_shifts = len(dr_arr)
+    
+    # Collect occupied cells into pre-allocated buffer
+    count = 0
+    for r in range(rows):
+        for c in range(cols):
+            if grid[r, c] != 0:
+                occupied_buffer[count, 0] = r
+                occupied_buffer[count, 1] = c
+                count += 1
+    
+    # Fisher-Yates shuffle
+    for i in range(count - 1, 0, -1):
+        j = np.random.randint(0, i + 1)
+        occupied_buffer[i, 0], occupied_buffer[j, 0] = occupied_buffer[j, 0], occupied_buffer[i, 0]
+        occupied_buffer[i, 1], occupied_buffer[j, 1] = occupied_buffer[j, 1], occupied_buffer[i, 1]
+    
+    # Process active cells
+    for i in range(count):
+        r = occupied_buffer[i, 0]
+        c = occupied_buffer[i, 1]
+        
+        state = grid[r, c]
+        if state == 0:
+            continue
+
+        if state == 1:  # PREY - same as random kernel
+            # Pick random neighbor
+            nbi = np.random.randint(0, n_shifts)
+            nr = (r + dr_arr[nbi]) % rows
+            nc = (c + dc_arr[nbi]) % cols
+            
+            if np.random.random() < prey_death_arr[r, c]:
+                grid[r, c] = 0
+                prey_death_arr[r, c] = np.nan
+            elif grid[nr, nc] == 0:
+                if np.random.random() < p_birth_val:
+                    grid[nr, nc] = 1
+                    parent_val = prey_death_arr[r, c]
+                    if not evolution_stopped:
+                        child_val = parent_val + np.random.normal(0, evolve_sd)
+                        if child_val < evolve_min:
+                            child_val = evolve_min
+                        if child_val > evolve_max:
+                            child_val = evolve_max
+                        prey_death_arr[nr, nc] = child_val
+                    else:
+                        prey_death_arr[nr, nc] = parent_val
+
+        elif state == 2:  # PREDATOR - directed hunting
+            # First check for death
+            if np.random.random() < pred_death_val:
+                grid[r, c] = 0
+                continue
+            
+            # Check all neighbors for prey
+            prey_count = 0
+            for k in range(n_shifts):
+                check_r = (r + dr_arr[k]) % rows
+                check_c = (c + dc_arr[k]) % cols
+                if grid[check_r, check_c] == 1:
+                    prey_count += 1
+            
+            if prey_count > 0:
+                # Directed hunt: pick one prey neighbor uniformly at random
+                # We need to re-scan to select one
+                target_idx = np.random.randint(0, prey_count)
+                found = 0
+                nr, nc = 0, 0
+                for k in range(n_shifts):
+                    check_r = (r + dr_arr[k]) % rows
+                    check_c = (c + dc_arr[k]) % cols
+                    if grid[check_r, check_c] == 1:
+                        if found == target_idx:
+                            nr = check_r
+                            nc = check_c
+                            break
+                        found += 1
+                
+                # Attempt reproduction into the prey cell
+                if np.random.random() < pred_birth_val:
+                    grid[nr, nc] = 2
+                    prey_death_arr[nr, nc] = np.nan
+            else:
+                # No prey visible: pick a random neighbor (exploration)
+                nbi = np.random.randint(0, n_shifts)
+                nr = (r + dr_arr[nbi]) % rows
+                nc = (c + dc_arr[nbi]) % cols
+                
+                # Can only reproduce if neighbor happens to be prey
+                if grid[nr, nc] == 1:
+                    if np.random.random() < pred_birth_val:
+                        grid[nr, nc] = 2
+                        prey_death_arr[nr, nc] = np.nan
+
+    return grid
+
+    
+    
+
 class PPKernel:
     """
     Wrapper for predator-prey kernel with pre-allocated buffers.
@@ -155,13 +279,20 @@ class PPKernel:
     This avoids allocation overhead inside the hot loop.
     
     Usage:
-        kernel = PPKernel(100, 100, neighborhood="moore")
+        # Random movement (original behavior)
+        kernel = PPKernel(100, 100, directed_hunting=False)
+        
+        # Directed hunting (new behavior)
+        kernel = PPKernel(100, 100, directed_hunting=True)
+        
         for step in range(1000):
             kernel.update(grid, prey_death_arr, ...)
     """
-    def __init__(self, rows: int, cols: int, neighborhood: str = "moore"):
+    def __init__(self, rows: int, cols: int, neighborhood: str = "moore", 
+                 directed_hunting: bool = False):
         self.rows = rows
         self.cols = cols
+        self.directed_hunting = directed_hunting
         
         # Pre-allocate work buffer
         self._occupied_buffer = np.empty((rows * cols, 2), dtype=np.int32)
@@ -188,15 +319,26 @@ class PPKernel:
         evolve_max: float = 0.1,
         evolution_stopped: bool = True,
     ) -> np.ndarray:
-        """Update grid one step."""
-        return _pp_async_kernel(
-            grid, prey_death_arr,
-            prey_birth, prey_death, pred_birth, pred_death,
-            self._dr, self._dc,
-            evolve_sd, evolve_min, evolve_max,
-            evolution_stopped,
-            self._occupied_buffer,
-        )
+        """Update grid one step using the selected kernel variant."""
+        if self.directed_hunting:
+            return _pp_async_kernel_directed(
+                grid, prey_death_arr,
+                prey_birth, prey_death, pred_birth, pred_death,
+                self._dr, self._dc,
+                evolve_sd, evolve_min, evolve_max,
+                evolution_stopped,
+                self._occupied_buffer,
+            )
+        else:
+            return _pp_async_kernel_random(
+                grid, prey_death_arr,
+                prey_birth, prey_death, pred_birth, pred_death,
+                self._dr, self._dc,
+                evolve_sd, evolve_min, evolve_max,
+                evolution_stopped,
+                self._occupied_buffer,
+            )
+        
         
 @njit(cache=True)
 def _build_cell_list(
@@ -205,27 +347,17 @@ def _build_cell_list(
     L_row: float,
     L_col: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """
-    Build cell list for spatial hashing.
-    
-    Returns:
-        indices: Particle indices sorted by cell
-        offsets: Starting index for each cell
-        counts: Number of particles in each cell
-        cell_size_r, cell_size_c: Cell dimensions
-    """
+    """Build cell list for spatial hashing."""
     n_pos = len(positions)
     cell_size_r = L_row / n_cells
     cell_size_c = L_col / n_cells
     
-    # Count particles per cell
     cell_counts = np.zeros((n_cells, n_cells), dtype=np.int32)
     for i in range(n_pos):
         cr = int(positions[i, 0] / cell_size_r) % n_cells
         cc = int(positions[i, 1] / cell_size_c) % n_cells
         cell_counts[cr, cc] += 1
     
-    # Build cumulative offsets
     offsets = np.zeros((n_cells, n_cells), dtype=np.int32)
     running = 0
     for cr in range(n_cells):
@@ -233,7 +365,6 @@ def _build_cell_list(
             offsets[cr, cc] = running
             running += cell_counts[cr, cc]
     
-    # Fill particle indices
     indices = np.empty(n_pos, dtype=np.int32)
     fill_counts = np.zeros((n_cells, n_cells), dtype=np.int32)
     for i in range(n_pos):
@@ -539,34 +670,32 @@ def measure_cluster_sizes_fast(grid: np.ndarray, species: int) -> np.ndarray:
 
 
 
-def warmup_numba_kernels(grid_size: int = 100):
-    """
-    Pre-compile all Numba kernels.
-    
-    Call once at startup to avoid JIT overhead during parallel execution.
-    """
+def warmup_numba_kernels(grid_size: int = 100, directed_hunting: bool = False):
+    """Pre-compile all Numba kernels."""
     if not NUMBA_AVAILABLE:
         return
     
     set_numba_seed(0)
     
-    # Dummy data
     grid = np.zeros((grid_size, grid_size), dtype=np.int32)
-    grid[::3, ::3] = 1  # Sparse prey
-    grid[::5, ::5] = 2  # Sparse predators
+    grid[::3, ::3] = 1
+    grid[::5, ::5] = 2
     
     prey_death_arr = np.full((grid_size, grid_size), 0.05, dtype=np.float64)
     prey_death_arr[grid != 1] = np.nan
     
-    # Warmup kernel
-    kernel = PPKernel(grid_size, grid_size)
-    kernel.update(grid.copy(), prey_death_arr.copy(), 0.2, 0.05, 0.2, 0.1)
+    # Warmup random kernel
+    kernel_random = PPKernel(grid_size, grid_size, directed_hunting=False)
+    kernel_random.update(grid.copy(), prey_death_arr.copy(), 0.2, 0.05, 0.2, 0.1)
     
-    # Warmup PCF
+    # Warmup directed kernel if requested
+    if directed_hunting:
+        kernel_directed = PPKernel(grid_size, grid_size, directed_hunting=True)
+        kernel_directed.update(grid.copy(), prey_death_arr.copy(), 0.2, 0.05, 0.2, 0.1)
+    
     _ = compute_all_pcfs_fast(grid, max_distance=20.0, n_bins=20)
-    
-    # Warmup clusters
     _ = measure_cluster_sizes_fast(grid, 1)
+
     
 
 def benchmark_pcf(grid_size: int = 100, n_runs: int = 10):
@@ -608,28 +737,29 @@ def benchmark_pcf(grid_size: int = 100, n_runs: int = 10):
     return elapsed / n_runs * 1000
 
 
-def benchmark_kernel(grid_size: int = 100, n_steps: int = 500):
+def benchmark_kernel(grid_size: int = 100, n_steps: int = 500, directed_hunting: bool = False):
     """Benchmark simulation kernel."""
     import time
     
+    mode = "DIRECTED" if directed_hunting else "RANDOM"
     print("=" * 60)
-    print(f"KERNEL BENCHMARK ({n_steps} steps, {grid_size}x{grid_size})")
+    print(f"KERNEL BENCHMARK - {mode} ({n_steps} steps, {grid_size}x{grid_size})")
     print("=" * 60)
     
     np.random.seed(42)
+    set_numba_seed(42)
+    
     grid = np.random.choice([0, 1, 2], size=(grid_size, grid_size), 
                             p=[0.55, 0.30, 0.15]).astype(np.int32)
     prey_death = np.full((grid_size, grid_size), 0.05, dtype=np.float64)
     prey_death[grid != 1] = np.nan
     
-    kernel = PPKernel(grid_size, grid_size)
+    kernel = PPKernel(grid_size, grid_size, directed_hunting=directed_hunting)
     
-    # Warmup
     g = grid.copy()
     p = prey_death.copy()
     kernel.update(g, p, 0.2, 0.05, 0.2, 0.1)
     
-    # Benchmark
     g = grid.copy()
     p = prey_death.copy()
     t0 = time.perf_counter()
@@ -647,6 +777,6 @@ if __name__ == "__main__":
     print("NUMBA OPTIMIZATION BENCHMARKS")
     print("=" * 60 + "\n")
     
-    benchmark_kernel()
+    benchmark_kernel(directed_hunting=False)
     print()
-    benchmark_pcf()
+    benchmark_kernel(directed_hunting=True)

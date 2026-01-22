@@ -8,8 +8,7 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
-from scripts.numba_optimized import PPKernel
-from numba import njit
+from scripts.numba_optimized import PPKernel, set_numba_seed
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -19,9 +18,6 @@ logger = logging.getLogger(__name__)
 _cached_ndimage = None
 _cached_kernels = {}
 
-@njit
-def set_numba_seed(value):
-	np.random.seed(value)
 
 class CA:
 	"""Base cellular automaton class.
@@ -852,6 +848,7 @@ class PP(CA):
 		cell_params: Dict[str, object] = None,
 		seed: Optional[int] = None,
 		synchronous: bool = True,
+		directed_hunting: bool = False, # New directed hunting option
 	) -> None:
 		# Allowed params and defaults
 		_defaults = {
@@ -885,6 +882,8 @@ class PP(CA):
 		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
 
 		self.synchronous: bool = bool(synchronous)
+		self.directed_hunting: bool = bool(directed_hunting)
+    
 		# set human-friendly species names for PP
 		self.species_names = ("prey", "predator")
   
@@ -892,7 +891,7 @@ class PP(CA):
 			# This sets the seed for all @njit functions globally
 			set_numba_seed(seed)
    
-		self._kernel = PPKernel(rows, cols, neighborhood)
+		self._kernel = PPKernel(rows, cols, neighborhood, directed_hunting=directed_hunting)
 
 
 	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
@@ -1167,14 +1166,99 @@ class PP(CA):
 
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, new_state_val)
+   
+		
+		def _process_predator_hunting(sources, birth_param_key, birth_prob):
+			"""Handle predator reproduction with directed movement toward prey.
+			
+			Predators check all neighbors: if any neighbor contains prey, 
+			preferentially move to one of them; otherwise pick a random neighbor.
+			"""
+			if sources.size == 0:
+				return
 
-		# Prey reproduce into empty cells (target state 0 -> new state 1)
-		prey_sources = np.argwhere(grid_ref == 1)
-		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
+			M = sources.shape[0]
+			# Determine per-source birth probabilities (from cell_params if present)
+			parent_probs = self._get_parent_probs(sources, birth_param_key, birth_prob)
 
-		# Predators reproduce into prey cells (target state 1 -> new state 2)
+			# Which sources attempt reproduction
+			attempt_mask = gen.random(M) < parent_probs
+			if not np.any(attempt_mask):
+				return
+
+			src = sources[attempt_mask]
+			K = src.shape[0]
+
+			# For each predator, check all neighbors to find prey
+			selected_neighbors = np.zeros((K, 2), dtype=int)
+			
+			for i in range(K):
+				r, c = int(src[i, 0]), int(src[i, 1])
+				# Get all neighbor positions
+				neighbors_r = (r + dr_arr) % rows
+				neighbors_c = (c + dc_arr) % cols
+				# Check which neighbors have prey
+				prey_neighbors = (grid_ref[neighbors_r, neighbors_c] == 1)
+				
+				if np.any(prey_neighbors):
+					# Pick one prey neighbor uniformly at random (directed movement)
+					prey_indices = np.where(prey_neighbors)[0]
+					chosen_idx = int(gen.choice(prey_indices))
+				else:
+					# No prey visible; pick a random neighbor
+					chosen_idx = int(gen.integers(0, n_shifts))
+				
+				selected_neighbors[i, 0] = neighbors_r[chosen_idx]
+				selected_neighbors[i, 1] = neighbors_c[chosen_idx]
+
+			nr = selected_neighbors[:, 0]
+			nc = selected_neighbors[:, 1]
+
+			# Only keep attempts where the target was prey (required state = 1)
+			valid_mask = (grid_ref[nr, nc] == 1)
+			if not np.any(valid_mask):
+				return
+
+			src_valid = src[valid_mask]
+			nr = nr[valid_mask]
+			nc = nc[valid_mask]
+
+			# Flatten target indices to group collisions
+			target_flat = (nr * cols + nc).astype(np.int64)
+			order = np.argsort(target_flat)
+			tf_sorted = target_flat[order]
+
+			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
+			if uniq_targets.size == 0:
+				return
+
+			# For each unique target, pick one predator uniformly at random
+			chosen_sorted_positions = []
+			for start, cnt in zip(idx_start, counts):
+				off = int(gen.integers(0, cnt))
+				chosen_sorted_positions.append(start + off)
+			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
+
+			chosen_indices = order[chosen_sorted_positions]
+			chosen_target_flats = target_flat[chosen_indices]
+			chosen_rs = (chosen_target_flats // cols).astype(int)
+			chosen_cs = (chosen_target_flats % cols).astype(int)
+
+			parents = src_valid[chosen_indices]
+
+			# Apply successful hunts: predators convert prey to predator
+			grid[chosen_rs, chosen_cs] = 2
+
+			# Handle inheritance/clearing of per-cell parameters
+			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, 2)
+
+
+		# Predators hunt with directed movement toward prey
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
+		if self.directed_hunting:
+			_process_predator_hunting(pred_sources, "predator_birth", self.params["predator_birth"])
+		else:
+			_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
 		# Get the evolved prey death map
