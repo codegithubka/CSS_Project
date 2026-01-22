@@ -1,4 +1,4 @@
-## Refactoring and Optimization Update
+## Refactoring and Optimization Update (22/1)
 
 ---
 
@@ -9,7 +9,6 @@ Method: ```update_async``` method
 This method is the primary interface for the async update mode in the PP model. Instead of iterating through the grid in Python, we prepare the data and leaves the heavy computations for the Numba kernel
 
 Kernel execution: ```self._kernel.update(..)```  uses pre-allocated ```PPKernel``` to modify the gruid and parameter arrays on place.
-
 
 We mutate the ```grid``` and the ```p_death_arr`` at the same time.
 
@@ -216,4 +215,69 @@ Directed Hunting Overhead
 
 As a resultl, we can probably use a 1000x1000 grid for our HPC simulation!
 
+## Testing and HPC Run Update (23/1)
+
+HPC Run Estimate (we are using 32 cores)
+
+bash
+```
+2026-01-22 21:09:55,625 [INFO] ============================================================
+2026-01-22 21:09:55,625 [INFO] PP Evolutionary Analysis - OPTIMIZED VERSION
+2026-01-22 21:09:55,625 [INFO] ============================================================
+2026-01-22 21:09:55,625 [INFO] Mode: full
+2026-01-22 21:09:55,626 [INFO] Output: results
+2026-01-22 21:09:55,626 [INFO] Cores: -1
+2026-01-22 21:09:55,626 [INFO] Numba: ENABLED
+2026-01-22 21:09:55,626 [INFO] Directed hunting: DISABLED
+2026-01-22 21:09:55,626 [INFO] Estimated: 23,000 sims, ~0.1h on 96 cores (~5 core-hours)
+2026-01-22 21:09:55,626 [INFO] Dry run - exiting
+(snellius_venv) [kanagnostopoul@int5 ~]$ 
+```
+
 ### Tests
+
+```test_pp_analysis```
+
+We have 58 test cases (one might fail to to messing with the grid size init default):
+
+```
+Run with:
+    pytest test_pp_analysis.py -v
+    pytest test_pp_analysis.py -v -x  # stop on first failure
+```
+
+Do not be alarmed by this if I forgot to change the test case to match the default value. The final grid size should be solidified by Friday.
+
+```
+def test_config_default_values(self, default_config):
+        """Config should have sensible defaults."""
+>       assert default_config.default_grid == 100
+E       assert 1000 == 100
+
+```
+---
+
+```test_numba_optimized```
+
+Run with:
+```
+    pytest test_numba_optimized.py -v
+    pytest test_numba_optimized.py -v --tb=short  # shorter traceback
+    python test_numba_optimized.py  # without pytest
+```
+
+
+We have 48 tests cases validating the folloiwing:
+
+- Imports
+- Kernel Initialization
+- Buffer allocation
+- Async updates
+- Evolution
+- Directed and undirected kernel methods
+- PCF behavior
+- Cluster metrics
+- Warmup
+- Edge cases with extreme parameter values
+
+
