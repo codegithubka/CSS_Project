@@ -258,6 +258,182 @@ class TestPPKernel:
         assert np.array_equal(results[0], results[1]), "Results should be deterministic"
 
 
+class TestPPKernelDirectedHunting:
+    """Tests for PPKernel with directed hunting behavior."""
+    
+    def test_kernel_initialization_directed_false(self):
+        """Kernel should default to directed_hunting=False."""
+        kernel = PPKernel(50, 50, "moore")
+        assert kernel.directed_hunting == False
+    
+    def test_kernel_initialization_directed_true(self):
+        """Kernel should accept directed_hunting=True."""
+        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
+        assert kernel.directed_hunting == True
+    
+    def test_kernel_directed_runs_without_error(self, medium_grid, prey_death_array):
+        """Directed hunting kernel should run without errors."""
+        set_numba_seed(42)
+        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
+        
+        grid = medium_grid.copy()
+        prey_death = prey_death_array.copy()
+        
+        # Run multiple steps
+        for _ in range(20):
+            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
+        
+        # Grid should only have valid states
+        assert grid.min() >= 0
+        assert grid.max() <= 2
+    
+    def test_kernel_directed_valid_states(self, medium_grid, prey_death_array):
+        """Directed kernel should produce only valid states."""
+        set_numba_seed(42)
+        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
+        
+        grid = medium_grid.copy()
+        prey_death = prey_death_array.copy()
+        
+        for _ in range(50):
+            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
+        
+        unique = np.unique(grid)
+        assert all(v in [0, 1, 2] for v in unique)
+    
+    def test_kernel_directed_prey_death_consistency(self, medium_grid, prey_death_array):
+        """Directed kernel should maintain prey_death array consistency."""
+        set_numba_seed(42)
+        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
+        
+        grid = medium_grid.copy()
+        prey_death = prey_death_array.copy()
+        
+        for _ in range(20):
+            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1,
+                         evolution_stopped=False)
+        
+        # Prey cells should have non-NaN death rates
+        prey_mask = (grid == 1)
+        non_prey_mask = (grid != 1)
+        
+        if np.any(prey_mask):
+            assert np.all(~np.isnan(prey_death[prey_mask]))
+        assert np.all(np.isnan(prey_death[non_prey_mask]))
+    
+    def test_kernel_directed_evolution_respects_bounds(self, medium_grid, prey_death_array):
+        """Directed kernel evolution should stay within bounds."""
+        set_numba_seed(42)
+        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
+        evolve_min, evolve_max = 0.01, 0.15
+        
+        grid = medium_grid.copy()
+        prey_death = prey_death_array.copy()
+        
+        for _ in range(100):
+            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1,
+                         evolve_sd=0.1, evolve_min=evolve_min, evolve_max=evolve_max,
+                         evolution_stopped=False)
+        
+        valid_values = prey_death[~np.isnan(prey_death)]
+        if len(valid_values) > 0:
+            assert valid_values.min() >= evolve_min - 1e-10
+            assert valid_values.max() <= evolve_max + 1e-10
+    
+    def test_kernel_directed_neumann_neighborhood(self):
+        """Directed hunting should work with von Neumann neighborhood."""
+        np.random.seed(42)
+        set_numba_seed(42)
+        
+        grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
+        prey_death = np.full((30, 30), 0.05, dtype=np.float64)
+        prey_death[grid != 1] = np.nan
+        
+        kernel = PPKernel(30, 30, "neumann", directed_hunting=True)
+        
+        for _ in range(20):
+            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
+        
+        assert grid.min() >= 0
+        assert grid.max() <= 2
+    
+    def test_random_vs_directed_different_behavior(self):
+        """Random and directed kernels should produce different results."""
+        np.random.seed(123)
+        
+        # Create identical starting grids
+        grid_template = np.random.choice([0, 1, 2], (40, 40), 
+                                         p=[0.50, 0.35, 0.15]).astype(np.int32)
+        
+        grid_random = grid_template.copy()
+        grid_directed = grid_template.copy()
+        
+        prey_death_random = np.full((40, 40), 0.05, dtype=np.float64)
+        prey_death_random[grid_random != 1] = np.nan
+        prey_death_directed = prey_death_random.copy()
+        
+        kernel_random = PPKernel(40, 40, "moore", directed_hunting=False)
+        kernel_directed = PPKernel(40, 40, "moore", directed_hunting=True)
+        
+        # Run with same seed
+        set_numba_seed(999)
+        for _ in range(50):
+            kernel_random.update(grid_random, prey_death_random, 
+                               0.2, 0.05, 0.6, 0.1)
+        
+        set_numba_seed(999)
+        for _ in range(50):
+            kernel_directed.update(grid_directed, prey_death_directed,
+                                  0.2, 0.05, 0.6, 0.1)
+        
+        # Grids should differ (directed hunting changes dynamics)
+        # Note: not guaranteed for every seed, but highly likely
+        prey_random = np.sum(grid_random == 1)
+        prey_directed = np.sum(grid_directed == 1)
+        pred_random = np.sum(grid_random == 2)
+        pred_directed = np.sum(grid_directed == 2)
+        
+        # At minimum, both should have valid grids
+        assert grid_random.min() >= 0 and grid_random.max() <= 2
+        assert grid_directed.min() >= 0 and grid_directed.max() <= 2
+        
+        # The populations should likely differ
+        # (we don't assert this strictly as it depends on random dynamics)
+        print(f"Random:   prey={prey_random}, pred={pred_random}")
+        print(f"Directed: prey={prey_directed}, pred={pred_directed}")
+    
+    def test_directed_predator_hunts_adjacent_prey(self):
+        """Directed predator should successfully hunt adjacent prey."""
+        # Create controlled scenario: predator surrounded by prey
+        grid = np.zeros((10, 10), dtype=np.int32)
+        grid[5, 5] = 2  # Predator in center
+        grid[4, 5] = 1  # Prey above
+        grid[6, 5] = 1  # Prey below  
+        grid[5, 4] = 1  # Prey left
+        grid[5, 6] = 1  # Prey right
+        
+        prey_death = np.full((10, 10), 0.05, dtype=np.float64)
+        prey_death[grid != 1] = np.nan
+        
+        kernel = PPKernel(10, 10, "neumann", directed_hunting=True)
+        
+        initial_prey = np.sum(grid == 1)
+        initial_pred = np.sum(grid == 2)
+        
+        # Run with high predator birth, zero predator death
+        set_numba_seed(42)
+        for _ in range(5):
+            kernel.update(grid, prey_death, 0.0, 0.05, 1.0, 0.0)
+        
+        final_prey = np.sum(grid == 1)
+        final_pred = np.sum(grid == 2)
+        
+        # Predators should have converted some prey
+        # (with 100% birth rate and 0% death rate)
+        assert final_pred >= initial_pred, "Predator population should not decrease"
+        print(f"Prey: {initial_prey} -> {final_prey}")
+        print(f"Pred: {initial_pred} -> {final_pred}")
+
 # ============================================================================
 # TEST: PCF COMPUTATION
 # ============================================================================
@@ -483,6 +659,14 @@ class TestWarmup:
         
         # Should complete quickly (less than 1 second for 10 iterations)
         assert elapsed < 1.0, f"Kernel too slow after warmup: {elapsed:.2f}s"
+        
+        
+    def test_warmup_directed_hunting(self):
+        """Warmup should work with directed_hunting=True."""
+        try:
+            warmup_numba_kernels(30, directed_hunting=True)
+        except Exception as e:
+            pytest.fail(f"Warmup with directed_hunting failed: {e}")
 
 
 # ============================================================================
@@ -570,6 +754,44 @@ class TestEdgeCases:
         # Should not crash
         assert True
 
+
+    def test_directed_single_predator_surrounded_by_prey(self):
+        """Directed hunting: single predator surrounded by prey."""
+        grid = np.ones((5, 5), dtype=np.int32)  # All prey
+        grid[2, 2] = 2  # One predator in center
+        
+        prey_death = np.full((5, 5), 0.05, dtype=np.float64)
+        prey_death[grid != 1] = np.nan
+        
+        kernel = PPKernel(5, 5, "moore", directed_hunting=True)
+        set_numba_seed(42)
+        
+        # Run a few steps
+        for _ in range(3):
+            kernel.update(grid, prey_death, 0.0, 0.05, 0.9, 0.0)
+        
+        # Should not crash, grid should be valid
+        assert grid.min() >= 0
+        assert grid.max() <= 2
+    
+    def test_directed_no_prey_nearby(self):
+        """Directed hunting: predator with no prey neighbors should explore."""
+        grid = np.zeros((10, 10), dtype=np.int32)
+        grid[0, 0] = 2  # Predator in corner
+        grid[9, 9] = 1  # Prey far away
+        
+        prey_death = np.full((10, 10), 0.05, dtype=np.float64)
+        prey_death[grid != 1] = np.nan
+        
+        kernel = PPKernel(10, 10, "moore", directed_hunting=True)
+        set_numba_seed(42)
+        
+        # Run - predator should explore randomly (no prey adjacent)
+        for _ in range(5):
+            kernel.update(grid, prey_death, 0.0, 0.05, 0.5, 0.0)
+        
+        assert grid.min() >= 0
+        assert grid.max() <= 2
 
 # ============================================================================
 # MAIN

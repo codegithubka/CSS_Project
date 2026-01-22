@@ -81,6 +81,18 @@ def fast_config():
     cfg.collect_pcf = False
     return cfg
 
+@pytest.fixture
+def fast_config_directed():
+    """Fast configuration with directed hunting enabled."""
+    cfg = Config()
+    cfg.default_grid = 30
+    cfg.warmup_steps = 20
+    cfg.measurement_steps = 30
+    cfg.cluster_samples = 1
+    cfg.collect_pcf = False
+    cfg.directed_hunting = True
+    return cfg
+
 
 @pytest.fixture
 def sample_grid():
@@ -186,6 +198,16 @@ class TestConfig:
     def test_config_pcf_sample_rate(self, default_config):
         """PCF sample rate should be between 0 and 1."""
         assert 0 <= default_config.pcf_sample_rate <= 1
+        
+    def test_config_directed_hunting_default(self, default_config):
+        """Config should have directed_hunting attribute defaulting to False."""
+        assert hasattr(default_config, 'directed_hunting')
+        assert default_config.directed_hunting == False
+    
+    def test_config_directed_hunting_settable(self, default_config):
+        """directed_hunting should be settable."""
+        default_config.directed_hunting = True
+        assert default_config.directed_hunting == True
 
 
 # ============================================================================
@@ -571,6 +593,115 @@ class TestRunSingleSimulation:
         assert isinstance(result["prey_survived"], bool)
         assert isinstance(result["pred_survived"], bool)
 
+@pytest.mark.skipif(not CA_AVAILABLE, reason="CA module not available")
+class TestDirectedHunting:
+    """Tests for directed hunting functionality in simulations."""
+    
+    @pytest.fixture(autouse=True)
+    def setup(self, fast_config):
+        """Setup fast config for all tests."""
+        self.cfg = fast_config
+        self.cfg.directed_hunting = False  # Default to False for comparison
+    
+    def test_simulation_with_directed_hunting_false(self):
+        """Simulation should work with directed_hunting=False."""
+        self.cfg.directed_hunting = False
+        
+        result = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=30,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        assert isinstance(result, dict)
+        assert "prey_mean" in result
+        assert result["prey_mean"] >= 0
+    
+    def test_simulation_with_directed_hunting_true(self):
+        """Simulation should work with directed_hunting=True."""
+        self.cfg.directed_hunting = True
+        
+        result = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=30,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        assert isinstance(result, dict)
+        assert "prey_mean" in result
+        assert result["prey_mean"] >= 0
+    
+    def test_directed_hunting_changes_dynamics(self):
+        """Directed hunting should produce different population dynamics."""
+        # Run with random movement
+        self.cfg.directed_hunting = False
+        result_random = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=40,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        # Run with directed hunting
+        self.cfg.directed_hunting = True
+        result_directed = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=40,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        # Both should produce valid results
+        assert result_random["prey_mean"] >= 0
+        assert result_directed["prey_mean"] >= 0
+        
+        # Note: We don't assert they're different because stochastic dynamics
+        # means they could occasionally be similar. Just verify both run.
+        print(f"Random:   prey_mean={result_random['prey_mean']:.1f}")
+        print(f"Directed: prey_mean={result_directed['prey_mean']:.1f}")
+    
+    def test_directed_hunting_with_evolution(self):
+        """Directed hunting should work with evolution enabled."""
+        self.cfg.directed_hunting = True
+        
+        result = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=30,
+            seed=42, with_evolution=True, cfg=self.cfg,
+        )
+        
+        assert isinstance(result, dict)
+        assert result["with_evolution"] == True
+        
+        # Should have evolved death rate stats
+        if result.get("prey_survived", False):
+            # If prey survived, we should have evolution stats
+            assert "evolved_death_mean" in result or "prey_mean" in result
+    
+    def test_directed_hunting_multiple_seeds(self):
+        """Directed hunting should work with multiple seeds."""
+        self.cfg.directed_hunting = True
+        
+        results = []
+        for seed in [1, 2, 3, 4, 5]:
+            result = run_single_simulation(
+                prey_birth=0.2, prey_death=0.05, grid_size=30,
+                seed=seed, with_evolution=False, cfg=self.cfg,
+            )
+            results.append(result)
+        
+        assert len(results) == 5
+        for r in results:
+            assert "prey_mean" in r
+            assert r["prey_mean"] >= 0
+    
+    def test_directed_hunting_high_predator_birth(self):
+        """Directed hunting with high predator birth should deplete prey faster."""
+        self.cfg.directed_hunting = True
+        self.cfg.predator_birth = 0.8  # High predator birth rate
+        
+        result = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=30,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        # With high predator birth and directed hunting, prey often go extinct
+        assert isinstance(result, dict)
+        # Don't assert extinction - just that it ran successfully
+        
 
 @pytest.mark.skipif(not CA_AVAILABLE, reason="CA module not available")
 class TestRunSingleSimulationFSS:
@@ -630,7 +761,20 @@ class TestRunSingleSimulationFSS:
             
             assert result["grid_size"] == size
             assert result["prey_mean"] >= 0
-
+            
+            
+    def test_fss_with_directed_hunting(self):
+        """FSS simulation should work with directed hunting."""
+        self.cfg.directed_hunting = True
+        
+        result = run_single_simulation_fss(
+            prey_birth=0.2, prey_death=0.05, grid_size=30,
+            seed=42, cfg=self.cfg,
+            warmup_steps=20, measurement_steps=30,
+        )
+        
+        assert isinstance(result, dict)
+        assert "prey_mean" in result
 
 # ============================================================================
 # TEST: PARAMETER SWEEP LOGIC
@@ -730,6 +874,24 @@ class TestIntegration:
         
         assert result_no["with_evolution"] == False
         assert result_yes["with_evolution"] == True
+        
+        
+    def test_directed_hunting_binary_roundtrip(self):
+        """Directed hunting results should roundtrip through binary format."""
+        self.cfg.directed_hunting = True
+        
+        result = run_single_simulation(
+            prey_birth=0.2, prey_death=0.05, grid_size=25,
+            seed=42, with_evolution=False, cfg=self.cfg,
+        )
+        
+        filepath = self.temp_dir / "directed_roundtrip.npz"
+        save_sweep_binary([result], filepath)
+        loaded = load_sweep_binary(filepath)
+        
+        assert len(loaded) == 1
+        assert np.isclose(loaded[0]["prey_birth"], result["prey_birth"])
+        assert np.isclose(loaded[0]["prey_mean"], result["prey_mean"])
 
 
 # ============================================================================

@@ -356,3 +356,6 @@ Note: Each worker process in parallel execution needs its own seed call.
 For parallel simulations, use different seeds per worker (e.g., base_seed + worker_id).
 
 
+
+
+5. Help me write additional tests for the hunting feature logic using the numba kernels.  The additional tests will be added to the test_numba and test_pp_analysis test files and should adhere to their exisiting implementation logic. If you falsify tests, you will be replaced.

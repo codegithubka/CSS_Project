@@ -114,6 +114,7 @@ class Config:
     
     # Update mode
     synchronous: bool = False
+    directed_hunting: bool = False 
     
     # Diagnostic snapshots
     save_diagnostic_plots: bool = False
@@ -333,6 +334,7 @@ def run_single_simulation(
         params=params,
         seed=seed,
         synchronous=cfg.synchronous,
+        directed_hunting=cfg.directed_hunting,
     )
     
     if with_evolution:
@@ -1024,12 +1026,17 @@ def main():
     parser.add_argument("--cores", type=int, default=-1)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--sync", action="store_true", dest="synchronous")
+    parser.add_argument("--directed-hunting", action="store_true", 
+                       help="Enable directed predator hunting behavior")
     args = parser.parse_args()
     
     # Setup
     cfg = Config()
     cfg.synchronous = args.synchronous
+    cfg.directed_hunting = getattr(args, 'directed_hunting', False)
     cfg.n_jobs = args.cores if args.cores > 0 else int(os.environ.get("SLURM_CPUS_PER_TASK", -1))
+    
+    warmup_numba_kernels(cfg.default_grid, directed_hunting=cfg.directed_hunting)
     
     output_dir = Path(args.output)
     output_dir.mkdir(exist_ok=True)
@@ -1053,6 +1060,7 @@ def main():
     logger.info(f"Output: {output_dir}")
     logger.info(f"Cores: {cfg.n_jobs}")
     logger.info(f"Numba: {'ENABLED' if USE_NUMBA else 'DISABLED'}")
+    logger.info(f"Directed hunting: {'ENABLED' if cfg.directed_hunting else 'DISABLED'}")
     
     if args.mode == "debug":
         run_debug_mode(cfg, logger)
