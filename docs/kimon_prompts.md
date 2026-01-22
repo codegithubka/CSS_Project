@@ -72,6 +72,8 @@
 11. Explain to me how seeding works with numba and multiple processes. One of the tests fails which may lead to unreproducable results. There is a potential bug in the way runs are seeded.
 
 
+
+```
 OUTPUT:
 
 (This was really interesting and might be useful in the future of our project as well)
@@ -307,8 +309,6 @@ def set_numba_seed(seed: int) -> None:
 @njit(cache=True)
 def _pp_async_kernel(...):
     # ... unchanged ...
-```
-
 
 ================================================================================
 TESTING THE FIX
@@ -339,8 +339,6 @@ def test_kernel_deterministic_with_seed():
         results.append(grid.copy())
     
     assert np.array_equal(results[0], results[1]), "Results should be deterministic"
-```
-
 
 ================================================================================
 WHY THIS WORKS
@@ -354,6 +352,8 @@ WHY THIS WORKS
 
 Note: Each worker process in parallel execution needs its own seed call.
 For parallel simulations, use different seeds per worker (e.g., base_seed + worker_id).
+
+```
 
 5. Help me write additional tests for the hunting feature logic using the numba kernels.  The additional tests will be added to the test_numba and test_pp_analysis test files and should adhere to their exisiting implementation logic. If you falsify tests, you will be replaced.
 

@@ -67,7 +67,7 @@ class Config:
     """Central configuration for analysis."""
     
     # Grid settings
-    default_grid: int = 100
+    default_grid: int = 1000
     densities: Tuple[float, float] = (0.30, 0.15)
     
     # 2D sweep resolution
