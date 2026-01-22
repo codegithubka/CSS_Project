@@ -355,7 +355,9 @@ WHY THIS WORKS
 Note: Each worker process in parallel execution needs its own seed call.
 For parallel simulations, use different seeds per worker (e.g., base_seed + worker_id).
 
-
-
-
 5. Help me write additional tests for the hunting feature logic using the numba kernels.  The additional tests will be added to the test_numba and test_pp_analysis test files and should adhere to their exisiting implementation logic. If you falsify tests, you will be replaced.
+
+6. Write a final smoke test for the HPC simulation. Tests module imports. numba kernel, a full mock simulation, the pcf computation, cluster measurement, seeding and the binary roundtrip for saving output.
+
+
+7. Use the attached legacy simulation function to compute benchmarking resukts for our optimization. Include functionality to save in a csv and plots showing the most significant results. Include flags to run with or without plots and csv output.

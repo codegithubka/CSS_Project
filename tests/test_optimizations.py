@@ -27,7 +27,7 @@ def get_modules():
             NUMBA_AVAILABLE, PPKernel, compute_all_pcfs_fast, measure_cluster_sizes_fast
         )
     except ImportError:
-        from numba_optimized import (
+        from scripts.numba_optimized import (
             NUMBA_AVAILABLE, PPKernel, compute_all_pcfs_fast, measure_cluster_sizes_fast
         )
     return NUMBA_AVAILABLE, PPKernel, compute_all_pcfs_fast, measure_cluster_sizes_fast
