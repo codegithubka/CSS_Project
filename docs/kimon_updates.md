@@ -197,7 +197,6 @@ bash
     python scripts/pp_analysis.py --dry-run            # Estimate runtime without running
 ```
 
-
 ### Benchmark Results
 
 The HPC script was optimized using JIT compilation.
