@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Prey-predator evolutionary analysis - Snellius HPC Version (Optimized)
 
@@ -48,6 +49,7 @@ try:
         compute_all_pcfs_fast,
         measure_cluster_sizes_fast,
         warmup_numba_kernels,
+        set_numba_seed,
         NUMBA_AVAILABLE,
     )
     USE_NUMBA = NUMBA_AVAILABLE
@@ -298,6 +300,10 @@ def run_single_simulation(
         Dictionary with simulation results
     """
     from models.CA import PP
+    # Seed both RNGs
+    np.random.seed(seed)
+    if NUMBA_AVAILABLE:
+        set_numba_seed(seed)
     
     # Set evolution parameters
     if evolve_sd is None:
@@ -450,6 +456,10 @@ def run_single_simulation_fss(
 ) -> Dict:
     """FSS-specific simulation with size-scaled equilibration time."""
     from models.CA import PP
+    
+    np.random.seed(seed)
+    if NUMBA_AVAILABLE:
+        set_numba_seed(seed)
     
     params = {
         "prey_birth": prey_birth,

@@ -1,4 +1,5 @@
 
+#!/usr/bin/env python3
 """
 Numba-optimized kernels for predator-prey cellular automaton.
 
@@ -37,6 +38,25 @@ except ImportError:
         return decorator
     def prange(*args):
         return range(*args)
+    
+    
+# ============================================================================
+# RNG SEEDING
+# ============================================================================
+
+@njit(cache=True)
+def set_numba_seed(seed: int) -> None:
+    """
+    Seed Numba's internal RNG from within a JIT context.
+    
+    IMPORTANT: This must be called to get reproducible results from 
+    Numba-accelerated functions. Calling np.random.seed() from Python
+    only affects NumPy's RNG, not Numba's internal Xoshiro128++ RNG.
+    
+    Args:
+        seed: Integer seed value
+    """
+    np.random.seed(seed)
     
 @njit(cache=True)
 def _pp_async_kernel(
@@ -527,6 +547,8 @@ def warmup_numba_kernels(grid_size: int = 100):
     """
     if not NUMBA_AVAILABLE:
         return
+    
+    set_numba_seed(0)
     
     # Dummy data
     grid = np.zeros((grid_size, grid_size), dtype=np.int32)

@@ -29,14 +29,16 @@ try:
         compute_all_pcfs_fast,
         measure_cluster_sizes_fast,
         warmup_numba_kernels,
+        set_numba_seed
     )
 except ImportError:
-    from numba_optimized import (
+    from scripts.numba_optimized import (
         NUMBA_AVAILABLE,
         PPKernel,
         compute_pcf_periodic_fast,
         compute_all_pcfs_fast,
         measure_cluster_sizes_fast,
+        set_numba_seed,
         warmup_numba_kernels,
     )
 
@@ -242,6 +244,7 @@ class TestPPKernel:
         
         for _ in range(2):
             np.random.seed(12345)
+            set_numba_seed(12345)
             grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
             prey_death = np.full((30, 30), 0.05, dtype=np.float64)
             prey_death[grid != 1] = np.nan
