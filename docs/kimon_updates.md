@@ -99,7 +99,7 @@ The hypothesis for the prey hydra effect is that increased mortality forces prey
 
 ### HPC Script Functionality (```pp_analysis.py```)
 
-Class: ```Config``
+Class: ```Config```
 
 Central configuration for analysis. Set grid dimensions, intial densities, resolution, death rate range, replications, warmup period, measurement window, stationarity, PCF sampling rates, mutation rate, fine size scaling grid sizes, and equilibrium scaling
 
@@ -118,6 +118,7 @@ Structural Reconstruction: ```load_sweep_binary```
 Performs the inverse operatiion taking flat binary files and rebuilding the Python list of dictionaries required for plotting.
 
 We use ```np.savez_compressed``` to reduce disk footprint for large arrays such as PCF results. 
+
 ---
 
 
@@ -146,5 +147,74 @@ Since larger systems usually take longer to each SS, we scale the warmup and mea
 --- 
 
 Phase Space Utility: ```run_2d_sweep```
+
+This is a high-throuput pipeline to generate raw data for boundary identification of the hydra effect and evo advantages.
+
+We construct a massive list of individual sim jobs (tasks) to be executed in parallel.
+Iterate through each combination of ```prey_births``` and ```prey_deaths``1.
+
+    For each parameter coordinate, we create two jobs:
+        1. Baseline (no evo)
+        2. Experimental (with evo)
+
+Before launchng the parallel threads, we warm up the kernels to avoid JIT (Just in Time) Numba Compilation overhead.
+
+Each task calls ```run_single_simulation``` indepdendetly and returns a dict of results collected into a master list.
+
+We compress the results efficiently using ```save_sweep_binary``` to keep a managable output size. We log the metatdat by generating a ```sweep_metadat.json```.
+
+---
+
+
+Plotting Utility: ```generate_plots```
+
+We resahpe the flat list of results into a grid based on the ```prey_birth``` and ```prey_death``` parameters. We get the mean population across replicates for eevry point and filter out random noise of individual runs. To get derivatives effectively, we use a Gaussian filter to make the Hydra calculation reliable.
+
+The Hydra effect is quantified as follows:
+- Use a numerical gradient acorss the smoothed population grid
+- Idenitfy the region where the derivative is positive that marks counter-intuitive   ecosystem dynamics.
+- Compare evo with no-evo sets.
+
+The function also computes spatial and criticality analysis as follows:
+- Plot the power law exponent to show near phase transition regime
+- Visualize PCF results. A low segregation index indicates predator and prey spatial separation, which indicates the Hydra effect in the CA model
+- Overlay the Hydra boundary on top of the segreation heatmap to show correlation between spatial structure and population response (if existing)
+
+
+We also calculate a relative advantage score to quantify the benifit of adaptation. We highlight regions where the baseline population went extinct but the evo population survived to show "evolutionary rescue".
+
+----
+Usage of the analysis script is recommended as follows:
+
+bash
+```
+    python pp_analysis.py --mode full          # Run everything
+    python pp_analysis.py --mode sweep         # Only 2D sweep
+    python pp_analysis.py --mode sensitivity   # Only evolution sensitivity
+    python pp_analysis.py --mode fss           # Only finite-size scaling
+    python pp_analysis.py --mode plot          # Only generate plots from saved data
+    python pp_analysis.py --mode debug         # Interactive visualization (local only)
+    python scripts/pp_analysis.py --dry-run            # Estimate runtime without running
+```
+
+
+### Benchmark Results
+
+The HPC script was optimized using JIT compilation.
+
+Numba Kernel Accelaration:
+
+- Speedup: 58.7x performance increase for a 50x50 grid
+- Throughput: 1,216 steps per second
+
+Spatial Metrics Refactoring:
+
+- PCF: The cell-list algorithm resulted in a 562.5 speedup on a 75x75 grid
+- Cluster metrics: Numba flood-fill algo gave us 24.6x speedup
+
+Directed Hunting Overhead
+- Negative ovderhead for larger grids (30-56% less!)
+
+As a resultl, we can probably use a 1000x1000 grid for our HPC simulation!
 
 ### Tests
