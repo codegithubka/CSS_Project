@@ -3,8 +3,8 @@
 Creates a 250x250 grid, enables per-cell evolution for `prey_death`, and
 visualizes the grid every 5 iterations while running for 2500 steps.
 """
-from models.CA import PP
 
+from models.CA import PP
 
 def main():
     params = {

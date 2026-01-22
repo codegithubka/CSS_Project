@@ -18,7 +18,7 @@ Usage:
     python pp_analysis.py --mode fss           # Only finite-size scaling
     python pp_analysis.py --mode plot          # Only generate plots from saved data
     python pp_analysis.py --mode debug         # Interactive visualization (local only)
-    python pp_analysis.py --dry-run            # Estimate runtime without running
+    python scripts/pp_analysis.py --dry-run            # Estimate runtime without running
 """
 
 import argparse

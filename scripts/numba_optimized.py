@@ -48,11 +48,6 @@ except ImportError:
 def set_numba_seed(seed: int) -> None:
     """
     Seed Numba's internal RNG from within a JIT context.
-    
-    IMPORTANT: This must be called to get reproducible results from 
-    Numba-accelerated functions. Calling np.random.seed() from Python
-    only affects NumPy's RNG, not Numba's internal Xoshiro128++ RNG.
-    
     Args:
         seed: Integer seed value
     """
