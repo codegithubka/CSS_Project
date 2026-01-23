@@ -179,6 +179,256 @@ class CA:
 			counts.append(neigh)
 		return tuple(counts)
 
+	class UnionFind:
+		"""Union-Find data structure for efficient cluster label management.
+		
+		Used internally by Hoshen-Kopelman algorithm to track label equivalences.
+		Implements path compression and union by rank for near-constant time operations.
+		"""
+		
+		def __init__(self):
+			self.parent = {}
+			self.rank = {}
+		
+		def make_set(self, x):
+			"""Create a new set containing only x."""
+			if x not in self.parent:
+				self.parent[x] = x
+				self.rank[x] = 0
+		
+		def find(self, x):
+			"""Find the root of x's set with path compression."""
+			if self.parent[x] != x:
+				self.parent[x] = self.find(self.parent[x])  # Path compression
+			return self.parent[x]
+		
+		def union(self, x, y):
+			"""Unite the sets containing x and y using union by rank."""
+			root_x = self.find(x)
+			root_y = self.find(y)
+			
+			if root_x == root_y:
+				return
+			
+			# Union by rank
+			if self.rank[root_x] < self.rank[root_y]:
+				self.parent[root_x] = root_y
+			elif self.rank[root_x] > self.rank[root_y]:
+				self.parent[root_y] = root_x
+			else:
+				self.parent[root_y] = root_x
+				self.rank[root_x] += 1
+
+	def detect_clusters(self, state: int = None) -> Tuple[np.ndarray, Dict[int, int]]:
+		"""Detect clusters using Hoshen-Kopelman algorithm with Union-Find.
+		
+		Identifies connected components (clusters) of occupied sites in the grid.
+		Uses the configured neighborhood type (Neumann or Moore) to determine
+		connectivity. Implements periodic boundary conditions.
+		
+		Args:
+			state (int, optional): Specific state value to cluster (1, 2, etc.).
+				If None, clusters all non-zero states together.
+		
+		Returns:
+			Tuple containing:
+			- labels (np.ndarray): 2D array same shape as grid, where each cell
+				contains its cluster label (0 for empty/non-target cells, positive
+				integers for cluster IDs). Cluster IDs are contiguous starting from 1.
+			- sizes (Dict[int, int]): Dictionary mapping cluster label -> cluster size
+				(number of sites in that cluster). Does not include label 0.
+		
+		Example:
+			>>> labels, sizes = ca.detect_clusters(state=1)  # Cluster only prey
+			>>> largest_cluster = max(sizes.values())
+			>>> print(f"Largest prey cluster: {largest_cluster} sites")
+		
+		Note:
+			This method scans the grid once (O(N)) and uses Union-Find for
+			efficient label management (O(N α(N)) where α is the inverse
+			Ackermann function, effectively constant). Topology emerges
+			implicitly from the connectivity rules - no explicit perimeter
+			or shape calculation is needed.
+		"""
+		rows, cols = self.grid.shape
+		labels = np.zeros((rows, cols), dtype=int)
+		uf = self.UnionFind()
+		current_label = 1
+		
+		# Determine which cells to cluster
+		if state is None:
+			# Cluster all non-zero states together
+			mask = (self.grid != 0)
+		else:
+			# Cluster only the specified state
+			mask = (self.grid == state)
+		
+		# Define neighbor offsets based on neighborhood type
+		if self.neighborhood == "neumann":
+			# Check left and top (already scanned positions)
+			neighbor_offsets = [(-1, 0), (0, -1)]
+		else:  # moore
+			# Check top-left, top, top-right, and left (already scanned positions)
+			neighbor_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1)]
+		
+		# First pass: assign labels and record equivalences
+		for i in range(rows):
+			for j in range(cols):
+				if not mask[i, j]:
+					continue
+				
+				# Check already-scanned neighbors
+				neighbor_labels = []
+				for di, dj in neighbor_offsets:
+					ni = (i + di) % rows  # Periodic boundary
+					nj = (j + dj) % cols  # Periodic boundary
+					
+					if labels[ni, nj] > 0:
+						neighbor_labels.append(labels[ni, nj])
+				
+				if len(neighbor_labels) == 0:
+					# New cluster - assign new label
+					labels[i, j] = current_label
+					uf.make_set(current_label)
+					current_label += 1
+				else:
+					# Join existing cluster(s)
+					min_label = min(neighbor_labels)
+					labels[i, j] = min_label
+					
+					# Union all neighbor labels (they're all part of same cluster)
+					for label in neighbor_labels:
+						uf.make_set(label)
+						uf.union(min_label, label)
+		
+		# Second pass: resolve labels to their root and make contiguous
+		# Create mapping from old roots to new contiguous labels
+		root_to_new_label = {}
+		next_new_label = 1
+		
+		final_labels = np.zeros((rows, cols), dtype=int)
+		cluster_sizes = {}
+		
+		for i in range(rows):
+			for j in range(cols):
+				if labels[i, j] > 0:
+					root = uf.find(labels[i, j])
+					
+					# Assign contiguous label if not seen before
+					if root not in root_to_new_label:
+						root_to_new_label[root] = next_new_label
+						cluster_sizes[next_new_label] = 0
+						next_new_label += 1
+					
+					new_label = root_to_new_label[root]
+					final_labels[i, j] = new_label
+					cluster_sizes[new_label] += 1
+		
+		return final_labels, cluster_sizes
+
+	def get_cluster_stats(self, state: int = None) -> Dict[str, object]:
+		"""Compute comprehensive cluster statistics for the current grid state.
+		
+		Args:
+			state (int, optional): Specific state to analyze. If None, analyzes
+				all non-zero states together.
+		
+		Returns:
+			Dictionary containing:
+			- 'n_clusters' (int): Total number of distinct clusters
+			- 'sizes' (np.ndarray): Array of cluster sizes, sorted descending
+			- 'largest' (int): Size of the largest cluster
+			- 'mean_size' (float): Mean cluster size
+			- 'size_distribution' (Dict[int, int]): Histogram mapping size -> count
+			- 'labels' (np.ndarray): Cluster label array from detect_clusters
+			- 'size_dict' (Dict[int, int]): Cluster label -> size mapping
+		
+		Example:
+			>>> stats = ca.get_cluster_stats(state=1)
+			>>> print(f"Found {stats['n_clusters']} prey clusters")
+			>>> print(f"Largest cluster: {stats['largest']} sites")
+			>>> print(f"Mean size: {stats['mean_size']:.2f}")
+		"""
+		labels, size_dict = self.detect_clusters(state=state)
+		
+		if len(size_dict) == 0:
+			return {
+				'n_clusters': 0,
+				'sizes': np.array([]),
+				'largest': 0,
+				'mean_size': 0.0,
+				'size_distribution': {},
+				'labels': labels,
+				'size_dict': size_dict
+			}
+		
+		sizes = np.array(list(size_dict.values()))
+		sizes_sorted = np.sort(sizes)[::-1]  # Descending order
+		
+		# Create size distribution (size -> count)
+		size_dist = {}
+		for s in sizes:
+			size_dist[s] = size_dist.get(s, 0) + 1
+		
+		return {
+			'n_clusters': len(size_dict),
+			'sizes': sizes_sorted,
+			'largest': int(np.max(sizes)),
+			'mean_size': float(np.mean(sizes)),
+			'size_distribution': size_dist,
+			'labels': labels,
+			'size_dict': size_dict
+		}
+
+	def get_percolating_cluster(self, state: int = None, direction: str = 'both') -> Tuple[bool, int, np.ndarray]:
+		"""Detect whether a percolating cluster exists (spans the grid).
+		
+		A percolating cluster is one that connects opposite edges of the grid,
+		indicating a phase transition in percolation theory.
+		
+		Args:
+			state (int, optional): State to check for percolation. If None,
+				checks all non-zero states.
+			direction (str): Direction to check:
+				- 'horizontal': left-to-right spanning
+				- 'vertical': top-to-bottom spanning  
+				- 'both': either direction (default)
+		
+		Returns:
+			Tuple containing:
+			- percolates (bool): True if a percolating cluster exists
+			- cluster_label (int): Label of the percolating cluster (0 if none)
+			- labels (np.ndarray): Full cluster label array
+		
+		Example:
+			>>> percolates, label, labels = ca.get_percolating_cluster(state=1)
+			>>> if percolates:
+			>>>     print(f"Prey percolates! Cluster {label}")
+		"""
+		labels, size_dict = self.detect_clusters(state=state)
+		rows, cols = labels.shape
+		
+		percolating_labels = set()
+		
+		if direction in ('horizontal', 'both'):
+			# Check which clusters touch both left and right edges
+			left_labels = set(labels[:, 0][labels[:, 0] > 0])
+			right_labels = set(labels[:, -1][labels[:, -1] > 0])
+			percolating_labels.update(left_labels & right_labels)
+		
+		if direction in ('vertical', 'both'):
+			# Check which clusters touch both top and bottom edges
+			top_labels = set(labels[0, :][labels[0, :] > 0])
+			bottom_labels = set(labels[-1, :][labels[-1, :] > 0])
+			percolating_labels.update(top_labels & bottom_labels)
+		
+		if percolating_labels:
+			# Return the largest percolating cluster
+			perc_label = max(percolating_labels, key=lambda x: size_dict[x])
+			return True, perc_label, labels
+		else:
+			return False, 0, labels
+
 	def update(self) -> None:
 		"""Perform one update step.
 
@@ -277,6 +527,7 @@ class CA:
 		show_cell_params: bool = False,
 		show_neighbors: bool = True,
 		downsample: Optional[int] = None,
+		show_clusters: bool = True,       
 		) -> None:
 		"""Enable interactive visualization of the grid.
 
@@ -299,6 +550,8 @@ class CA:
 		except ImportError as e:
 			# Matplotlib is required for interactive visualization
 			raise ImportError("matplotlib is required for visualize(); install matplotlib") from e
+		
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
 
 		# Keep a reference to pyplot so _viz_update can use it without importing
 		self._viz_plt = plt
@@ -393,22 +646,33 @@ class CA:
 			_ds = _ds_auto
 		else:
 			_ds = max(1, int(downsample))
-		# initialize histogram: compute neighbor counts for prey
-		n_neighbors = 4 if self.neighborhood == "neumann" else 8
-		counts = self.count_neighbors()[0]
-		prey_pos = (self.grid == 1)
+
+		# initialize cluster size distribution plot
 		if show_neighbors:
-			if np.any(prey_pos):
-				vals = counts[prey_pos]
-			else:
-				vals = np.array([], dtype=int)
-			bins = np.arange(n_neighbors + 1)
-			hist_vals = np.bincount(vals, minlength=n_neighbors + 1)
-			bars = ax_hist.bar(bins, hist_vals, align='center')
-			ax_hist.set_xlabel('Prey neighbor count')
-			ax_hist.set_ylabel('Number of prey')
+			# Get initial cluster statistics
+			try:
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = list(size_dist.keys())
+					counts = list(size_dist.values())
+					scatter = ax_hist.scatter(sizes, counts, s=50, alpha=0.6, c='green', edgecolors='black')
+				else:
+					scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
+				ax_hist.set_title('Prey Cluster Size Distribution')
+				ax_hist.set_xscale('log')
+				ax_hist.set_yscale('log')
+				ax_hist.grid(True, alpha=0.3)
+			except Exception:
+				scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
 		else:
-			bars = []
+			scatter = None
 
 		# states image (downsampled for display)
 		grid_disp = self.grid[::_ds, ::_ds]
@@ -499,6 +763,7 @@ class CA:
 			ax_percentiles.set_xlabel('Iteration')
 			ax_percentiles.set_ylabel('Neighbor count')
 			ax_percentiles.legend()
+
 		# initialize percentiles xlim/ylim (only when axis exists)
 		if ax_percentiles is not None:
 			ax_percentiles.set_xlim(0, 1)
@@ -555,7 +820,7 @@ class CA:
 			"im_states": im_states,
 			"param_imps": param_imps,
 			"param_cbs": param_cbs,
-			"hist_bars": bars,
+			"hist_bars": scatter,
 			"state_lines": (line_prey, line_pred),
 			"perc_lines": (line_25, line_mean, line_75),
 			"param_stat_lines": param_stat_lines,
@@ -573,6 +838,18 @@ class CA:
 		self._viz_ds = _ds
 		# precompute a slice tuple for downsampled display indexing
 		self._viz_slice = (slice(None, None, _ds), slice(None, None, _ds))
+
+		# Initialize cluster tracking                    # <- START NEW CODE
+		self._viz_show_clusters = show_clusters
+		if show_clusters:
+			self._viz_cluster_stats = {
+				'prey_n_clusters': [],
+				'prey_largest': [],
+				'prey_mean': [],
+				'pred_n_clusters': [],
+				'pred_largest': [],
+				'pred_mean': []
+			}
 
 		plt.show(block=False)
 		# draw once to populate the renderer
@@ -605,6 +882,9 @@ class CA:
 		if (iteration % int(self._viz_interval)) != 0:
 			return
 
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
+
+
 		# pyplot is provided via visualize(); avoid importing here for performance
 		plt = getattr(self, "_viz_plt", None)
 
@@ -626,27 +906,51 @@ class CA:
 			_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
 			im_states.set_data(grid[_vslice])
 
-		# update histogram of prey neighbor counts
-		counts = self.count_neighbors()[0]
-		prey_mask = (grid == 1)
-		if np.any(prey_mask):
-			vals = counts[prey_mask]
-		else:
-			vals = np.array([], dtype=int)
-		nn = 4 if self.neighborhood == "neumann" else 8
-		hist_vals = np.bincount(vals, minlength=nn + 1)
-		bars = art.get("hist_bars")
-		if bars is not None:
-			for rect, h in zip(bars, hist_vals):
-				rect.set_height(h)
+		# update cluster size distribution
+		scatter = art.get("cluster_scatter")
+		if scatter is not None:
+			try:
+				# Get current cluster size distribution
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = np.array(list(size_dist.keys()))
+					counts = np.array(list(size_dist.values()))
+					
+					# Update scatter plot data
+					scatter.set_offsets(np.c_[sizes, counts])
+					
+					# Update axis limits dynamically
+					ax_hist = self._viz_axes.get("hist")
+					if ax_hist is not None:
+						# Set reasonable limits with some padding
+						if len(sizes) > 0:
+							ax_hist.set_xlim(0.5, max(sizes) * 1.5)
+							ax_hist.set_ylim(0.5, max(counts) * 1.5)
+			except Exception:
+				pass
 
-		# compute percentiles
-		if vals.size > 0:
-			p25 = float(np.percentile(vals, 25))
-			pmean = float(np.mean(vals))
-			p75 = float(np.percentile(vals, 75))
-		else:
-			p25 = pmean = p75 = 0.0
+		# compute percentiles (kept for compatibility, but not used for clusters)
+		p25 = pmean = p75 = 0.0
+
+		# Compute cluster statistics if enabled         # <- START NEW CODE
+		if getattr(self, "_viz_show_clusters", False):
+			try:
+				# Get prey cluster statistics
+				prey_stats = self.get_cluster_stats(state=1)
+				self._viz_cluster_stats['prey_n_clusters'].append(prey_stats['n_clusters'])
+				self._viz_cluster_stats['prey_largest'].append(prey_stats['largest'])
+				self._viz_cluster_stats['prey_mean'].append(prey_stats['mean_size'])
+				
+				# Get predator cluster statistics
+				pred_stats = self.get_cluster_stats(state=2)
+				self._viz_cluster_stats['pred_n_clusters'].append(pred_stats['n_clusters'])
+				self._viz_cluster_stats['pred_largest'].append(pred_stats['largest'])
+				self._viz_cluster_stats['pred_mean'].append(pred_stats['mean_size'])
+			except Exception:
+				
+				pass
 
 		# update time series data (append)
 		self._viz_time.append(iteration)
@@ -683,10 +987,11 @@ class CA:
 		if l75 is not None:
 			l75.set_data(self._viz_time, self._viz_neighbor_stats["75"])
 		# keep fixed y-limits for percentiles (if axis exists)
+
 		if len(self._viz_time) > 0:
 			axp = self._viz_axes.get("percentiles")
 			if axp is not None:
-				axp.set_ylim(0, nn)
+				axp.set_ylim(0, n_neighbors)
 				# expand xlim incrementally
 				cur_xmax = axp.get_xlim()[1]
 				if iteration > cur_xmax:
@@ -750,8 +1055,9 @@ class CA:
 					if im is not None:
 						im.axes.draw_artist(im)
 				# histogram bars
-				for rect in art.get("hist_bars", []):
-					rect.axes.draw_artist(rect)
+				scatter = art.get("cluster_scatter")
+				if scatter is not None:
+					scatter.axes.draw_artist(scatter)
 				# state lines
 				for ln in art.get("state_lines", ()): 
 					if ln is not None:
