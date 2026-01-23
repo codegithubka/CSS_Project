@@ -56,13 +56,16 @@ warnings.filterwarnings("ignore")
 # Import optimized Numba functions
 try:
     from scripts.numba_optimized import (
-        compute_pcf_periodic_fast,
-        compute_all_pcfs_fast,
-        measure_cluster_sizes_fast,
-        warmup_numba_kernels,
-        set_numba_seed,
-        NUMBA_AVAILABLE,
-    )
+    compute_pcf_periodic_fast,
+    compute_all_pcfs_fast,
+    measure_cluster_sizes_fast,
+    detect_clusters_fast,           # NEW: returns (labels, sizes_dict)
+    get_cluster_stats_fast,         # NEW: full statistics
+    get_percolating_cluster_fast,   # NEW: percolation detection
+    warmup_numba_kernels,
+    set_numba_seed,
+    NUMBA_AVAILABLE,
+)
     USE_NUMBA = NUMBA_AVAILABLE
 except ImportError:
     USE_NUMBA = False
@@ -309,6 +312,7 @@ def load_sweep_binary(input_path: Path) -> List[Dict]:
 # SIMULATION FUNCTION
 # =============================================================================
 
+
 def run_single_simulation(
     prey_birth: float,
     prey_death: float,
@@ -323,21 +327,6 @@ def run_single_simulation(
 ) -> Dict:
     """
     Run a single PP simulation and collect metrics.
-    
-    Args:
-        prey_birth: Prey birth rate
-        prey_death: Prey death rate (initial if evolving)
-        grid_size: Grid dimension (L x L)
-        seed: Random seed
-        with_evolution: Whether to evolve prey_death
-        cfg: Configuration object
-        evolve_sd: Evolution SD (overrides cfg if provided)
-        evolve_min: Evolution min (overrides cfg if provided)
-        evolve_max: Evolution max (overrides cfg if provided)
-        compute_pcf: Whether to compute PCF (overrides cfg sampling if provided)
-    
-    Returns:
-        Dictionary with simulation results
     """
     from models.CA import PP
     # Seed both RNGs
@@ -385,7 +374,9 @@ def run_single_simulation(
     # Measurement phase
     prey_pops, pred_pops, evolved_vals = [], [], []
     prey_clusters, pred_clusters = [], []
-    pcf_samples = {'prey_prey': [], 'pred_pred': [], 'prey_pred': []}
+    prey_largest_fractions, pred_largest_fractions = [], []
+    prey_percolates, pred_percolates = [], []
+    pcf_samples = {'prey_prey': [], 'pred_pred': [], 'prey_pred': []}  # <-- FIX 1: Initialize pcf_samples
     
     sample_counter = 0
     
@@ -406,9 +397,24 @@ def run_single_simulation(
         # Cluster and PCF sampling
         if step >= cfg.cluster_interval and sample_counter < cfg.cluster_samples:
             if prey >= min_count and pred >= (min_count // 4):
-                prey_clusters.extend(measure_cluster_sizes_fast(model.grid, 1))
-                pred_clusters.extend(measure_cluster_sizes_fast(model.grid, 2))
+                # Use enhanced cluster detection
+                prey_stats = get_cluster_stats_fast(model.grid, 1)
+                pred_stats = get_cluster_stats_fast(model.grid, 2)
                 
+                prey_clusters.extend(prey_stats['sizes'])
+                pred_clusters.extend(pred_stats['sizes'])
+                
+                # Track largest cluster fraction (order parameter)
+                prey_largest_fractions.append(prey_stats['largest_fraction'])
+                pred_largest_fractions.append(pred_stats['largest_fraction'])
+                
+                # Check for percolation
+                prey_perc, _, prey_perc_size, _ = get_percolating_cluster_fast(model.grid, 1)
+                pred_perc, _, pred_perc_size, _ = get_percolating_cluster_fast(model.grid, 2)
+                prey_percolates.append(prey_perc)
+                pred_percolates.append(pred_perc)
+                
+                # <-- FIX 2: Add PCF collection code back
                 # Compute PCFs if enabled for this run
                 if compute_pcf:
                     max_dist = min(grid_size / 2, cfg.pcf_max_distance)
@@ -417,7 +423,7 @@ def run_single_simulation(
                     pcf_samples['pred_pred'].append(pcf_data['pred_pred'])
                     pcf_samples['prey_pred'].append(pcf_data['prey_pred'])
             
-            sample_counter += 1
+            sample_counter += 1  # <-- FIX 3: Move outside the min_count check (was missing)
     
     # Compile results
     result = {
@@ -434,6 +440,15 @@ def run_single_simulation(
         "pred_survived": bool(np.mean(pred_pops) > 10),
         "prey_n_clusters": len(prey_clusters),
         "pred_n_clusters": len(pred_clusters),
+        
+        # Order parameter (largest cluster fraction)
+        "prey_largest_fraction_mean": float(np.mean(prey_largest_fractions)) if prey_largest_fractions else np.nan,
+        "prey_largest_fraction_std": float(np.std(prey_largest_fractions)) if prey_largest_fractions else np.nan,
+        "pred_largest_fraction_mean": float(np.mean(pred_largest_fractions)) if pred_largest_fractions else np.nan,
+        
+        # Percolation probability
+        "prey_percolation_prob": float(np.mean(prey_percolates)) if prey_percolates else np.nan,
+        "pred_percolation_prob": float(np.mean(pred_percolates)) if pred_percolates else np.nan,
     }
     
     # Evolved parameter statistics
@@ -528,6 +543,8 @@ def run_single_simulation_fss(
     # Measurement
     prey_pops, pred_pops = [], []
     prey_clusters, pred_clusters = [], []
+    prey_largest_fractions = []
+    prey_percolates = []
     
     cluster_interval = max(1, int(cfg.cluster_interval * grid_size / cfg.default_grid))
     sample_counter = 0
@@ -540,10 +557,20 @@ def run_single_simulation_fss(
         
         if step % cluster_interval == 0 and sample_counter < cfg.cluster_samples:
             if prey > 10:
-                prey_clusters.extend(measure_cluster_sizes_fast(model.grid, 1))
+                # Full cluster stats for FSS
+                prey_stats = get_cluster_stats_fast(model.grid, 1)
+                prey_clusters.extend(prey_stats['sizes'])
+                prey_largest_fractions.append(prey_stats['largest_fraction'])
+                
+                # Percolation check
+                prey_perc, _, _, _ = get_percolating_cluster_fast(model.grid, 1)
+                prey_percolates.append(prey_perc)
+                
                 pred_clusters.extend(measure_cluster_sizes_fast(model.grid, 2))
+            
             sample_counter += 1
     
+    # <-- FIX: Build result dict AFTER the loop, not inside it
     result = {
         "prey_birth": prey_birth,
         "prey_death": prey_death,
@@ -557,6 +584,9 @@ def run_single_simulation_fss(
         "pred_std": float(np.std(pred_pops)),
         "prey_survived": bool(np.mean(prey_pops) > 10),
         "pred_survived": bool(np.mean(pred_pops) > 10),
+        # FSS-specific metrics
+        "prey_largest_fraction": float(np.mean(prey_largest_fractions)) if prey_largest_fractions else np.nan,
+        "prey_percolation_prob": float(np.mean(prey_percolates)) if prey_percolates else np.nan,
     }
     
     # Cluster fits
@@ -581,6 +611,7 @@ def run_single_simulation_fss(
         result["pred_s_c"] = np.nan
     
     return result
+
 
 # =============================================================================
 # ANALYSIS RUNNERS

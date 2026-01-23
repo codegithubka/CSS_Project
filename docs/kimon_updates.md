@@ -300,15 +300,11 @@ Add clustering size index.
 Pertrubtion on the prey count.
 Cluster size distribution mesauremnt.
 
-powerlaw package.
-convergence of the disribution plots (p-values).
+Sary:
 
-Is the system SOC?
-
-Petrbutaions from initial conditions or critical point
-Timing between critical events? Get the model to be SOC.
-
-Look at larger collapes and the average collapse?
+Bifuraction
+Clustering Measurement
+Warmpup and Measurement size
 
 
 

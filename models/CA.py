@@ -9,6 +9,7 @@ from typing import Tuple, Dict, Optional
 import numpy as np
 import logging
 from scripts.numba_optimized import PPKernel, set_numba_seed
+from cluster_analysis import ClusterAnalyzer
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ class CA:
 		self._densities: Tuple[float, ...] = tuple(densities)
 		self.params: Dict[str, object] = dict(params) if params is not None else {}
 		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
+  
+		self._cluster_analyzer = ClusterAnalyzer(neighborhood=neighborhood)
 
 		# per-parameter evolve metadata and evolution state
 		# maps parameter name -> dict with keys 'sd','min','max','species'
@@ -232,6 +235,44 @@ class CA:
 			counts.append(neigh)
 		return tuple(counts)
 
+
+	def detect_clusters(self, state: int = None) -> Tuple[np.ndarray, Dict[int, int]]:
+		"""Detect clusters in the current grid.
+
+		See ClusterAnalyzer.detect_clusters() for full documentation.
+		"""
+		return self._cluster_analyzer.detect_clusters(self.grid, state=state)
+
+
+	def get_cluster_stats(self, state: int = None) -> Dict[str, object]:
+		"""Compute comprehensive cluster statistics for the current grid state.
+		
+		Args:
+			state (int, optional): Specific state to analyze. If None, analyzes
+				all non-zero states together.
+		
+		Returns:
+			Dictionary containing:
+			- 'n_clusters' (int): Total number of distinct clusters
+			- 'sizes' (np.ndarray): Array of cluster sizes, sorted descending
+			- 'largest' (int): Size of the largest cluster
+			- 'mean_size' (float): Mean cluster size
+			- 'size_distribution' (Dict[int, int]): Histogram mapping size -> count
+			- 'labels' (np.ndarray): Cluster label array from detect_clusters
+			- 'size_dict' (Dict[int, int]): Cluster label -> size mapping
+		
+		Example:
+			>>> stats = ca.get_cluster_stats(state=1)
+			>>> print(f"Found {stats['n_clusters']} prey clusters")
+			>>> print(f"Largest cluster: {stats['largest']} sites")
+			>>> print(f"Mean size: {stats['mean_size']:.2f}")
+		"""
+		return self._cluster_analyzer.get_stats(self.grid, state=state)
+
+	def get_percolating_cluster(self, state: int = None, direction: str = 'both') -> Tuple[bool, int, np.ndarray]:
+		"""Detect whether a percolating cluster exists (spans the grid)."""
+		return self._cluster_analyzer.check_percolation(self.grid, state=state, direction=direction)
+
 	def update(self) -> None:
 		"""Perform one update step.
 
@@ -299,6 +340,7 @@ class CA:
 		show_cell_params: bool = False,
 		show_neighbors: bool = True,
 		downsample: Optional[int] = None,
+		show_clusters: bool = True,       
 		) -> None:
 		"""Enable interactive visualization of the grid.
 
@@ -321,6 +363,8 @@ class CA:
 		except ImportError as e:
 			# Matplotlib is required for interactive visualization
 			raise ImportError("matplotlib is required for visualize(); install matplotlib") from e
+		
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
 
 		# Keep a reference to pyplot so _viz_update can use it without importing
 		self._viz_plt = plt
@@ -415,22 +459,33 @@ class CA:
 			_ds = _ds_auto
 		else:
 			_ds = max(1, int(downsample))
-		# initialize histogram: compute neighbor counts for prey
-		n_neighbors = 4 if self.neighborhood == "neumann" else 8
-		counts = self.count_neighbors()[0]
-		prey_pos = (self.grid == 1)
+
+		# initialize cluster size distribution plot
 		if show_neighbors:
-			if np.any(prey_pos):
-				vals = counts[prey_pos]
-			else:
-				vals = np.array([], dtype=int)
-			bins = np.arange(n_neighbors + 1)
-			hist_vals = np.bincount(vals, minlength=n_neighbors + 1)
-			bars = ax_hist.bar(bins, hist_vals, align='center')
-			ax_hist.set_xlabel('Prey neighbor count')
-			ax_hist.set_ylabel('Number of prey')
+			# Get initial cluster statistics
+			try:
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = list(size_dist.keys())
+					counts = list(size_dist.values())
+					scatter = ax_hist.scatter(sizes, counts, s=50, alpha=0.6, c='green', edgecolors='black')
+				else:
+					scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
+				ax_hist.set_title('Prey Cluster Size Distribution')
+				ax_hist.set_xscale('log')
+				ax_hist.set_yscale('log')
+				ax_hist.grid(True, alpha=0.3)
+			except Exception:
+				scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
 		else:
-			bars = []
+			scatter = None
 
 		# states image (downsampled for display)
 		grid_disp = self.grid[::_ds, ::_ds]
@@ -521,6 +576,7 @@ class CA:
 			ax_percentiles.set_xlabel('Iteration')
 			ax_percentiles.set_ylabel('Neighbor count')
 			ax_percentiles.legend()
+
 		# initialize percentiles xlim/ylim (only when axis exists)
 		if ax_percentiles is not None:
 			ax_percentiles.set_xlim(0, 1)
@@ -577,7 +633,7 @@ class CA:
 			"im_states": im_states,
 			"param_imps": param_imps,
 			"param_cbs": param_cbs,
-			"hist_bars": bars,
+			"hist_bars": scatter,
 			"state_lines": (line_prey, line_pred),
 			"perc_lines": (line_25, line_mean, line_75),
 			"param_stat_lines": param_stat_lines,
@@ -595,6 +651,18 @@ class CA:
 		self._viz_ds = _ds
 		# precompute a slice tuple for downsampled display indexing
 		self._viz_slice = (slice(None, None, _ds), slice(None, None, _ds))
+
+		# Initialize cluster tracking                    # <- START NEW CODE
+		self._viz_show_clusters = show_clusters
+		if show_clusters:
+			self._viz_cluster_stats = {
+				'prey_n_clusters': [],
+				'prey_largest': [],
+				'prey_mean': [],
+				'pred_n_clusters': [],
+				'pred_largest': [],
+				'pred_mean': []
+			}
 
 		plt.show(block=False)
 		# draw once to populate the renderer
@@ -627,6 +695,9 @@ class CA:
 		if (iteration % int(self._viz_interval)) != 0:
 			return
 
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
+
+
 		# pyplot is provided via visualize(); avoid importing here for performance
 		plt = getattr(self, "_viz_plt", None)
 
@@ -648,27 +719,51 @@ class CA:
 			_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
 			im_states.set_data(grid[_vslice])
 
-		# update histogram of prey neighbor counts
-		counts = self.count_neighbors()[0]
-		prey_mask = (grid == 1)
-		if np.any(prey_mask):
-			vals = counts[prey_mask]
-		else:
-			vals = np.array([], dtype=int)
-		nn = 4 if self.neighborhood == "neumann" else 8
-		hist_vals = np.bincount(vals, minlength=nn + 1)
-		bars = art.get("hist_bars")
-		if bars is not None:
-			for rect, h in zip(bars, hist_vals):
-				rect.set_height(h)
+		# update cluster size distribution
+		scatter = art.get("cluster_scatter")
+		if scatter is not None:
+			try:
+				# Get current cluster size distribution
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = np.array(list(size_dist.keys()))
+					counts = np.array(list(size_dist.values()))
+					
+					# Update scatter plot data
+					scatter.set_offsets(np.c_[sizes, counts])
+					
+					# Update axis limits dynamically
+					ax_hist = self._viz_axes.get("hist")
+					if ax_hist is not None:
+						# Set reasonable limits with some padding
+						if len(sizes) > 0:
+							ax_hist.set_xlim(0.5, max(sizes) * 1.5)
+							ax_hist.set_ylim(0.5, max(counts) * 1.5)
+			except Exception:
+				pass
 
-		# compute percentiles
-		if vals.size > 0:
-			p25 = float(np.percentile(vals, 25))
-			pmean = float(np.mean(vals))
-			p75 = float(np.percentile(vals, 75))
-		else:
-			p25 = pmean = p75 = 0.0
+		# compute percentiles (kept for compatibility, but not used for clusters)
+		p25 = pmean = p75 = 0.0
+
+		# Compute cluster statistics if enabled         # <- START NEW CODE
+		if getattr(self, "_viz_show_clusters", False):
+			try:
+				# Get prey cluster statistics
+				prey_stats = self.get_cluster_stats(state=1)
+				self._viz_cluster_stats['prey_n_clusters'].append(prey_stats['n_clusters'])
+				self._viz_cluster_stats['prey_largest'].append(prey_stats['largest'])
+				self._viz_cluster_stats['prey_mean'].append(prey_stats['mean_size'])
+				
+				# Get predator cluster statistics
+				pred_stats = self.get_cluster_stats(state=2)
+				self._viz_cluster_stats['pred_n_clusters'].append(pred_stats['n_clusters'])
+				self._viz_cluster_stats['pred_largest'].append(pred_stats['largest'])
+				self._viz_cluster_stats['pred_mean'].append(pred_stats['mean_size'])
+			except Exception:
+				
+				pass
 
 		# update time series data (append)
 		self._viz_time.append(iteration)
@@ -705,10 +800,11 @@ class CA:
 		if l75 is not None:
 			l75.set_data(self._viz_time, self._viz_neighbor_stats["75"])
 		# keep fixed y-limits for percentiles (if axis exists)
+
 		if len(self._viz_time) > 0:
 			axp = self._viz_axes.get("percentiles")
 			if axp is not None:
-				axp.set_ylim(0, nn)
+				axp.set_ylim(0, n_neighbors)
 				# expand xlim incrementally
 				cur_xmax = axp.get_xlim()[1]
 				if iteration > cur_xmax:
@@ -772,8 +868,9 @@ class CA:
 					if im is not None:
 						im.axes.draw_artist(im)
 				# histogram bars
-				for rect in art.get("hist_bars", []):
-					rect.axes.draw_artist(rect)
+				scatter = art.get("cluster_scatter")
+				if scatter is not None:
+					scatter.axes.draw_artist(scatter)
 				# state lines
 				for ln in art.get("state_lines", ()): 
 					if ln is not None:
@@ -1067,11 +1164,16 @@ class PP(CA):
 		Implements a vectorized equivalent of the random-sequential
 		asynchronous update. Each occupied cell (prey or predator) gets at
 		most one reproduction attempt: with probability `birth` it chooses a
-		random neighbor and, if that neighbor in the reference grid has the
+		neighbor and, if that neighbor in the reference grid has the
 		required target state (empty for prey, prey for predator), it
-		becomes a candidate attempt. When multiple reproducers target the
-		same cell, one attempt is chosen uniformly at random to succeed.
-		Deaths are applied the same vectorized way as in the async update.
+		becomes a candidate attempt. 
+		
+		Predators use directed movement: they preferentially move toward
+		prey neighbors when available; otherwise pick a random neighbor.
+		
+		When multiple reproducers target the same cell, one attempt is 
+		chosen uniformly at random to succeed. Deaths are applied the same 
+		vectorized way as in the async update.
 		"""
 
 		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
