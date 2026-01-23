@@ -64,7 +64,7 @@ echo "Output directory: $OUTPUT_DIR"
 echo ""
 
 # Run the full analysis
-python3 pp_analysis.py \
+python3 -u scripts/pp_analysis.py \
     --mode full \
     --output $OUTPUT_DIR \
     --cores $SLURM_CPUS_PER_TASK

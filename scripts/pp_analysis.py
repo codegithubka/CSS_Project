@@ -31,6 +31,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
+from tqdm import tqdm
 
 project_root = str(Path(__file__).parents[1])
 if project_root not in sys.path:
@@ -83,7 +84,7 @@ class Config:
     predator_birth: float = 0.2
     
     # Replicates
-    n_replicates: int = 50
+    n_replicates: int = 15
     
     # Simulation timing
     warmup_steps: int = 200
@@ -130,22 +131,36 @@ class Config:
         return np.linspace(self.prey_birth_min, self.prey_birth_max, self.n_prey_birth)
     
     def estimate_runtime(self, n_cores: int = 32) -> str:
-        """Estimate total runtime."""
+        """Estimate total runtime based on benchmark data."""
         n_sweep = self.n_prey_birth * self.n_prey_death * self.n_replicates * 2
         n_sens = len(self.sensitivity_sd_values) * self.sensitivity_replicates
         
-        # Base time per simulation (with optimized PCF)
-        base_time_s = 0.8  # ~800ms with cell-list PCF
-        pcf_overhead = 0.1 if self.collect_pcf else 0  # Much smaller with cell-list
+        # --- Scaling Logic ---
+        # Benchmark shows 1182 steps/sec for 100x100 grid
+        ref_size = 100
+        ref_steps_per_sec = 1182
         
+        # Scale throughput by area (L^2)
+        # A 1000x1000 grid is (1000/100)^2 = 100x slower per step
+        size_scaling = (self.default_grid / ref_size) ** 2
+        actual_steps_per_sec = ref_steps_per_sec / size_scaling
+        
+        # Calculate time for one full simulation (warmup + measurement)
+        total_steps_per_sim = self.warmup_steps + self.measurement_steps
+        base_time_s = total_steps_per_sim / actual_steps_per_sec
+        
+        # Account for PCF overhead (Cell-list PCF is ~8ms for 100x100)
+        pcf_time_s = (0.008 * size_scaling) if self.collect_pcf else 0
+        # ---------------------
+
         # FSS with size scaling
         fss_time = 0
         for L in self.fss_grid_sizes:
-            scale = (L / self.default_grid) ** 2
-            warmup_scale = L / self.default_grid
-            fss_time += self.fss_replicates * base_time_s * scale * warmup_scale
+            l_scale = (L / self.default_grid) ** 2
+            l_warmup_scale = L / self.default_grid  # Time also scales with warmup duration
+            fss_time += self.fss_replicates * base_time_s * l_scale * l_warmup_scale
         
-        sweep_time = n_sweep * (base_time_s + pcf_overhead * self.pcf_sample_rate)
+        sweep_time = n_sweep * (base_time_s + pcf_time_s * self.pcf_sample_rate)
         sens_time = n_sens * base_time_s
         
         total_seconds = (sweep_time + sens_time + fss_time) / n_cores
@@ -154,8 +169,6 @@ class Config:
         
         n_total = n_sweep + n_sens + sum(self.fss_replicates for _ in self.fss_grid_sizes)
         return f"{n_total:,} sims, ~{hours:.1f}h on {n_cores} cores (~{core_hours:.0f} core-hours)"
-
-
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
@@ -571,10 +584,10 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
     logger.info(f"  Replicates: {cfg.n_replicates}")
     logger.info(f"  PCF sample rate: {cfg.pcf_sample_rate:.0%}")
     
-    results = Parallel(n_jobs=cfg.n_jobs, verbose=10)(
+    results = Parallel(n_jobs=cfg.n_jobs, verbose=0)(
         delayed(run_single_simulation)(pb, pd, gs, seed, evo, cfg)
-        for pb, pd, gs, seed, evo in jobs
-    )
+        for pb, pd, gs, seed, evo in tqdm(jobs, desc="2D Sweep Progress", mininterval=30)
+        )
     
     # Save results
     output_file = output_dir / "sweep_results.npz"
@@ -610,9 +623,9 @@ def run_sensitivity(cfg: Config, output_dir: Path, logger: logging.Logger) -> Li
     logger.info(f"Sensitivity: {len(jobs)} simulations")
     logger.info(f"  SD values: {cfg.sensitivity_sd_values}")
     
-    results = Parallel(n_jobs=cfg.n_jobs, verbose=5)(
+    results = Parallel(n_jobs=cfg.n_jobs, verbose=0)(
         delayed(run_single_simulation)(pb, pd, gs, seed, evo, cfg, evolve_sd=sd, compute_pcf=True)
-        for pb, pd, gs, seed, evo, sd in jobs
+        for pb, pd, gs, seed, evo, sd in tqdm(jobs, desc="Sensitivity Progress", mininterval=10)
     )
     
     output_file = output_dir / "sensitivity_results.json"
@@ -665,9 +678,9 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
     logger.info(f"FSS: {len(jobs)} simulations")
     logger.info(f"  Grid sizes: {cfg.fss_grid_sizes}")
     
-    results = Parallel(n_jobs=cfg.n_jobs, verbose=5)(
+    results = Parallel(n_jobs=cfg.n_jobs, verbose=0)(
         delayed(run_single_simulation_fss)(pb, pd, gs, seed, cfg, ws, ms)
-        for pb, pd, gs, seed, ws, ms in jobs
+        for pb, pd, gs, seed, ws, ms in tqdm(jobs, desc="FSS Progress", mininterval=10)
     )
     
     output_file = output_dir / "fss_results.json"

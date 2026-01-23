@@ -39,6 +39,10 @@ scancel <JOBID>
 
 tail -f logs_<JOBID>.err
 
+# Watch task completetion
+
+watch -n 10 "ls -1 results_JOBID  | wc -l"
+
 # Fetching the results once the job is done
 
 scp -r kanagnostopoul@snellius.surf.nl:~/results_18532145 ~/Downloads/
