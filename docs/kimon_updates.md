@@ -281,3 +281,15 @@ We have 48 tests cases validating the folloiwing:
 - Edge cases with extreme parameter values
 
 
+### Issues to be resolved
+
+1. Grid size for Snellius run
+
+2. Number of replicates for statistical power
+
+3. Directed and/or undirected runs
+
+The above decisions will complicate our analysis in terms of noise reduction, finite size scaling, and capturing spatial correlations (hryda effect).
+
+
+
