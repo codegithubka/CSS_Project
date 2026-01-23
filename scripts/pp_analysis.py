@@ -414,7 +414,6 @@ def run_single_simulation(
                 prey_percolates.append(prey_perc)
                 pred_percolates.append(pred_perc)
                 
-                # <-- FIX 2: Add PCF collection code back
                 # Compute PCFs if enabled for this run
                 if compute_pcf:
                     max_dist = min(grid_size / 2, cfg.pcf_max_distance)
@@ -549,6 +548,8 @@ def run_single_simulation_fss(
     cluster_interval = max(1, int(cfg.cluster_interval * grid_size / cfg.default_grid))
     sample_counter = 0
     
+    min_count = int(cfg.min_analysis_density * (grid_size**2)) # Scaled threshold
+    
     for step in range(measurement_steps):
         model.update()
         _, prey, pred = count_populations(model.grid)
@@ -556,7 +557,7 @@ def run_single_simulation_fss(
         pred_pops.append(pred)
         
         if step % cluster_interval == 0 and sample_counter < cfg.cluster_samples:
-            if prey > 10:
+            if prey >= min_count:
                 # Full cluster stats for FSS
                 prey_stats = get_cluster_stats_fast(model.grid, 1)
                 prey_clusters.extend(prey_stats['sizes'])
