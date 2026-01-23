@@ -136,7 +136,6 @@ class Config:
     # Min density required for PCF/Clsuter Analysis
     min_analysis_density: float = 0.002 # FIXME: Minimum prey density (fraction of grid) to analyze clusters/PCF
     
-    
     target_prey_birth: float = 0.22  # FIXME: Change after obtaining results
     target_prey_death: float = 0.04  # FIXME; Change after obtaining results
     
@@ -191,7 +190,6 @@ class Config:
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
-
 
 def generate_unique_seed(pb: float, pd:float, rep:int) -> int:
     """Creates a unique, deterministic seed from parameters."""

@@ -261,7 +261,6 @@ Run with:
     python test_numba_optimized.py  # without pytest
 ```
 
-
 We have 48 tests cases validating the folloiwing:
 
 - Imports
@@ -294,6 +293,22 @@ Options:
 3. Discard non-evo runs and use mean field baseline instead or the opposite
 
 NOTE: Without the optimization kernels for a 1000x1000 grid the simulation (using 50 reps for statistical power) would run for 548 hours (approximately 23 days)
+
+### Results Dict
+
+Add clustering size index.
+Pertrubtion on the prey count.
+Cluster size distribution mesauremnt.
+
+powerlaw package.
+convergence of the disribution plots (p-values).
+
+Is the system SOC?
+
+Petrbutaions from initial conditions or critical point
+Timing between critical events? Get the model to be SOC.
+
+Look at larger collapes and the average collapse?
 
 
 

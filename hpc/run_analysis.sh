@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=pp_evo
-#SBATCH --partition=rome
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32

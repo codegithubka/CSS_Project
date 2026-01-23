@@ -551,7 +551,6 @@ def compute_all_pcfs_fast(
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, int]]:
     """
     Compute all three PCFs using cell-list acceleration.
-    
     Returns dict with keys: 'prey_prey', 'pred_pred', 'prey_pred'
     Each value is (distances, pcf, n_pairs).
     """
