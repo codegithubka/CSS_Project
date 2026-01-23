@@ -217,22 +217,17 @@ As a resultl, we can probably use a 1000x1000 grid for our HPC simulation!
 
 ## Testing and HPC Run Update (23/1)
 
-HPC Run Estimate (we are using 32 cores)
+HPC Run Estimate (we are using 32 cores).
 
-bash
-```
-2026-01-22 21:09:55,625 [INFO] ============================================================
-2026-01-22 21:09:55,625 [INFO] PP Evolutionary Analysis - OPTIMIZED VERSION
-2026-01-22 21:09:55,625 [INFO] ============================================================
-2026-01-22 21:09:55,625 [INFO] Mode: full
-2026-01-22 21:09:55,626 [INFO] Output: results
-2026-01-22 21:09:55,626 [INFO] Cores: -1
-2026-01-22 21:09:55,626 [INFO] Numba: ENABLED
-2026-01-22 21:09:55,626 [INFO] Directed hunting: DISABLED
-2026-01-22 21:09:55,626 [INFO] Estimated: 23,000 sims, ~0.1h on 96 cores (~5 core-hours)
-2026-01-22 21:09:55,626 [INFO] Dry run - exiting
-(snellius_venv) [kanagnostopoul@int5 ~]$ 
-```
+1000 x 1000 grid -> 1 million cells
+
+At each step: 500 million operations per simulation
+
+This is multiplied by the number of replicates. 50 reps will result in 22,500 simulations.
+
+By the benchmark, we have 1,182 steps per second (throuput) for a 100x100 grid. If we use a 1000x1000 grid, that implies 11.8 steps/second. So 1000x1000 grid with 50 reps
+
+8.26 hours (not ideal!)
 
 ### Tests
 
@@ -281,15 +276,27 @@ We have 48 tests cases validating the folloiwing:
 - Edge cases with extreme parameter values
 
 
-### Issues to be resolved
+## Issues to be resolved
 
-1. Grid size for Snellius run
+1. Grid size for HPC run
+2. Number of replicates for statistal power
+3. Directed and/or undirected runs 
+4. Evolving and non-evolving runs?
+5. Mean field baseline or non evolving basiline
+6. Warmup period and measurement steps (i.e how many steps do we need to avoid init bias?)
+7. Measurement frequency for statistical accuracy
+8. Default parameters (Need Storm's input on this one).
 
-2. Number of replicates for statistical power
+Options:
 
-3. Directed and/or undirected runs
+1. Asymmetric repliates for non-evolving runs
+2. Coarse initial parameter sweep grid
+3. Discard non-evo runs and use mean field baseline instead or the opposite
 
-The above decisions will complicate our analysis in terms of noise reduction, finite size scaling, and capturing spatial correlations (hryda effect).
+NOTE: Without the optimization kernels for a 1000x1000 grid the simulation (using 50 reps for statistical power) would run for 548 hours (approximately 23 days)
+
+
+
 
 
 

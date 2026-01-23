@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import warnings
 from tqdm import tqdm
+import hashlib
 
 project_root = str(Path(__file__).parents[1])
 if project_root not in sys.path:
@@ -68,31 +69,33 @@ class Config:
     """Central configuration for analysis."""
     
     # Grid settings
-    default_grid: int = 1000
-    densities: Tuple[float, float] = (0.30, 0.15)
+    default_grid: int = 100 #FIXME: Decide default configuration
+    densities: Tuple[float, float] = (0.30, 0.15) #FIXME: Default densities
     
     # 2D sweep resolution
-    n_prey_birth: int = 15
+    n_prey_birth: int = 15 # FIXME: Decide number of grid points along prey axes
     n_prey_death: int = 15
-    prey_birth_min: float = 0.10
+    prey_birth_min: float = 0.10 # FIXME: Range of prey death to sweep
     prey_birth_max: float = 0.35
     prey_death_min: float = 0.001
     prey_death_max: float = 0.10
     
     # Fixed predator parameters
-    predator_death: float = 0.1
-    predator_birth: float = 0.2
+    predator_death: float = 0.1 # FIXME: Default predator death rate
+    predator_birth: float = 0.2 # FIXME: Default predator birth
     
     # Replicates
-    n_replicates: int = 15
+    n_replicates: int = 15 # FIXME: Decide number of indep. runs per parameter config
     
     # Simulation timing
-    warmup_steps: int = 200
-    measurement_steps: int = 300
+    warmup_steps: int = 200 * (default_grid / 100) # FIXME: Steps to run before measuring
+    measurement_steps: int = 300 # FIXME: Decide measurement steps
     
     # Cluster/PCF sampling
     cluster_samples: int = 1  # Reduced from 3 - PCF is expensive
-    cluster_interval: int = 299  # Sample near end of measurement
+    @property
+    def cluster_interval(self) -> int:
+        return self.measurement_steps - 1 # Sample near end of measurement
     
     # PCF settings
     collect_pcf: bool = True
@@ -101,25 +104,28 @@ class Config:
     pcf_n_bins: int = 20
     
     # Evolution parameters
-    evolve_sd: float = 0.10
+    evolve_sd: float = 0.10 # FIXME: Tune evolution parameters
     evolve_min: float = 0.001
     evolve_max: float = 0.10
     
     # Finite size scaling
-    fss_grid_sizes: Tuple[int, ...] = (50, 75, 100, 150)
+    fss_grid_sizes: Tuple[int, ...] = (50, 75, 100, 150) # FIXME: Grid sizes for FSS
     fss_replicates: int = 100
     
     # Evolution sensitivity analysis
-    sensitivity_sd_values: Tuple[float, ...] = (0.02, 0.05, 0.10, 0.15, 0.20)
+    sensitivity_sd_values: Tuple[float, ...] = (0.02, 0.05, 0.10, 0.15, 0.20) # FIXME: SD values to test
     sensitivity_replicates: int = 20
     
     # Update mode
-    synchronous: bool = False
-    directed_hunting: bool = False 
+    synchronous: bool = False # NOTE: This should always be False for PP model
+    directed_hunting: bool = True # FIXME: With or without directed hunting functionality
     
     # Diagnostic snapshots
     save_diagnostic_plots: bool = False
     diagnostic_param_sets: int = 5
+    
+    # Min density required for PCF/Clsuter Analysis
+    min_analysis_density: float = 0.002 # FIXME: Minimum prey density (fraction of grid) to analyze clusters/PCF
     
     # Parallelization
     n_jobs: int = -1
@@ -172,6 +178,15 @@ class Config:
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+
+def generate_unique_seed(pb: float, pd:float, rep:int) -> int:
+    """Creates a unique, deterministic seed from parameters."""
+    
+    identifier = f"{pb:.6f}_{pd:.6f}_{rep}".encode()
+    hash_hex = hashlib.sha256(identifier).hexdigest()[:8]
+
+    return int(hash_hex, 16)
 
 def count_populations(grid: np.ndarray) -> Tuple[int, int, int]:
     """Count empty, prey, predator cells."""
@@ -363,6 +378,9 @@ def run_single_simulation(
     
     sample_counter = 0
     
+    # Calculate threshold based on area
+    min_count = int(cfg.min_analysis_density * (grid_size**2))
+    
     for step in range(cfg.measurement_steps):
         model.update()
         _, prey, pred = count_populations(model.grid)
@@ -376,7 +394,7 @@ def run_single_simulation(
         
         # Cluster and PCF sampling
         if step >= cfg.cluster_interval and sample_counter < cfg.cluster_samples:
-            if prey > 10:
+            if prey >= min_count and pred >= (min_count // 4):
                 prey_clusters.extend(measure_cluster_sizes_fast(model.grid, 1))
                 pred_clusters.extend(measure_cluster_sizes_fast(model.grid, 2))
                 
@@ -572,10 +590,10 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
     for pb in prey_births:
         for pd in prey_deaths:
             for rep in range(cfg.n_replicates):
-                seed_base = int(pb * 1000) + int(pd * 10000) + rep
+                seed = generate_unique_seed(pb, pd, rep)
                 # Both with and without evolution
-                jobs.append((pb, pd, cfg.default_grid, seed_base, False))
-                jobs.append((pb, pd, cfg.default_grid, seed_base, True))
+                jobs.append((pb, pd, cfg.default_grid, seed, False)) #FIXME: Consider cutting non-evo runs
+                jobs.append((pb, pd, cfg.default_grid, seed, True))
     
     logger.info(f"2D Sweep: {len(jobs):,} simulations")
     logger.info(f"  Grid: {len(prey_births)}×{len(prey_deaths)} parameters")
@@ -939,13 +957,18 @@ def generate_plots(cfg: Config, output_dir: Path, logger: logging.Logger):
     
     ax = axes[2]
     mid_pb_idx = n_pb // 2
-    ax.plot(prey_deaths, grids["prey_pop_no_evo"][:, mid_pb_idx], 'b-o',
-            label=f'No Evo (pb={prey_births[mid_pb_idx]:.2f})', markersize=4)
-    ax.plot(prey_deaths, grids["prey_pop_evo"][:, mid_pb_idx], 'g-s',
-            label=f'With Evo (pb={prey_births[mid_pb_idx]:.2f})', markersize=4)
+    target_pb = prey_births[mid_pb_idx]
+    no_evo_slice = grids["prey_pop_no_evo"][:, mid_pb_idx]
+    evo_slice = grids["prey_pop_evo"][:, mid_pb_idx]
+    
+    ax.plot(prey_deaths, no_evo_slice, 'b-o',
+            label=f'No Evo (pb={target_pb:.2f})', markersize=4)
+    ax.plot(prey_deaths, evo_slice, 'g-s',
+            label=f'With Evo (pb={target_pb:.2f})', markersize=4)
+    
     ax.set_xlabel("Prey Death Rate")
     ax.set_ylabel("Prey Population")
-    ax.set_title("Prey Pop vs Death Rate Slice")
+    ax.set_title(f"Prey Pop vs Death Rate (pb={target_pb:.2f})") # Dynamic title
     ax.legend()
     ax.grid(True, alpha=0.3)
     
