@@ -19,6 +19,15 @@ Usage:
     python pp_analysis.py --mode plot          # Only generate plots from saved data
     python pp_analysis.py --mode debug         # Interactive visualization (local only)
     python scripts/pp_analysis.py --dry-run            # Estimate runtime without running
+    
+    
+Stage 1: Discovery --mode sweep
+
+Stage 2: Targeted FSS
+    Obtain critical_prey_death and critical_prey_death.
+    Update the config with target_prey_birth and target_birth_death
+    
+    Run FSS mode: python pp_analysis.py --mode fss
 """
 
 import argparse
@@ -126,6 +135,10 @@ class Config:
     
     # Min density required for PCF/Clsuter Analysis
     min_analysis_density: float = 0.002 # FIXME: Minimum prey density (fraction of grid) to analyze clusters/PCF
+    
+    
+    target_prey_birth: float = 0.22  # FIXME: Change after obtaining results
+    target_prey_death: float = 0.04  # FIXME; Change after obtaining results
     
     # Parallelization
     n_jobs: int = -1
@@ -399,7 +412,7 @@ def run_single_simulation(
                 pred_clusters.extend(measure_cluster_sizes_fast(model.grid, 2))
                 
                 # Compute PCFs if enabled for this run
-                if compute_pcf and prey > 20 and pred > 5:
+                if compute_pcf:
                     max_dist = min(grid_size / 2, cfg.pcf_max_distance)
                     pcf_data = compute_all_pcfs_fast(model.grid, max_dist, cfg.pcf_n_bins)
                     pcf_samples['prey_prey'].append(pcf_data['prey_prey'])
@@ -576,7 +589,7 @@ def run_single_simulation_fss(
 # =============================================================================
 
 def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
-    """Run full 2D parameter sweep."""
+    """Run full 2D parameter sweep with incremental JSONL saving."""
     from joblib import Parallel, delayed
     
     if USE_NUMBA:
@@ -590,29 +603,42 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
     for pb in prey_births:
         for pd in prey_deaths:
             for rep in range(cfg.n_replicates):
+                # Unique seed for standard run
                 seed = generate_unique_seed(pb, pd, rep)
-                # Both with and without evolution
-                jobs.append((pb, pd, cfg.default_grid, seed, False)) #FIXME: Consider cutting non-evo runs
-                jobs.append((pb, pd, cfg.default_grid, seed, True))
+                jobs.append((pb, pd, cfg.default_grid, seed, False))
+                
+                # Different unique seed for evolutionary run
+                evo_seed = generate_unique_seed(pb, pd, rep + 1000000)
+                jobs.append((pb, pd, cfg.default_grid, evo_seed, True))
     
-    logger.info(f"2D Sweep: {len(jobs):,} simulations")
-    logger.info(f"  Grid: {len(prey_births)}×{len(prey_deaths)} parameters")
-    logger.info(f"  prey_birth: [{cfg.prey_birth_min:.3f}, {cfg.prey_birth_max:.3f}]")
-    logger.info(f"  prey_death: [{cfg.prey_death_min:.3f}, {cfg.prey_death_max:.3f}]")
-    logger.info(f"  Replicates: {cfg.n_replicates}")
-    logger.info(f"  PCF sample rate: {cfg.pcf_sample_rate:.0%}")
+    output_jsonl = output_dir / "sweep_results.jsonl"
+    logger.info(f"Starting sweep: {len(jobs):,} simulations")
+    logger.info(f"Incremental results will be saved to {output_jsonl}")
+
+    all_results = []
     
-    results = Parallel(n_jobs=cfg.n_jobs, verbose=0)(
-        delayed(run_single_simulation)(pb, pd, gs, seed, evo, cfg)
-        for pb, pd, gs, seed, evo in tqdm(jobs, desc="2D Sweep Progress", mininterval=30)
-        )
-    
-    # Save results
-    output_file = output_dir / "sweep_results.npz"
-    save_sweep_binary(results, output_file)
+    # Using 'return_as="generator"' allows us to save as each job finishes
+    # This prevents data loss if the 72-hour limit is reached early
+    with open(output_jsonl, "a", encoding="utf-8") as f:
+        # Create the parallel executor
+        executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
+        tasks = (delayed(run_single_simulation)(pb, pd, gs, seed, evo, cfg) 
+                 for pb, pd, gs, seed, evo in jobs)
+        
+        # Iterate through completed results
+        for result in tqdm(executor(tasks), total=len(jobs), desc="2D Sweep Progress"):
+            # 1. Save to JSONL immediately (Safety)
+            f.write(json.dumps(result) + "\n")
+            f.flush() # Force write to disk
+            
+            # 2. Store in memory for return/binary save (Optimization)
+            all_results.append(result)
+
+    output_npz = output_dir / "sweep_results.npz"
+    save_sweep_binary(all_results, output_npz)
     
     meta = {
-        "n_sims": len(results),
+        "n_sims": len(all_results),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "grid_size": cfg.default_grid,
         "pcf_sample_rate": cfg.pcf_sample_rate,
@@ -620,8 +646,8 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
     with open(output_dir / "sweep_metadata.json", "w") as f:
         json.dump(meta, f, indent=2)
     
-    logger.info(f"Saved sweep results to {output_file}")
-    return results
+    logger.info(f"Sweep complete. Binary data saved to {output_npz}")
+    return all_results
 
 
 def run_sensitivity(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
@@ -629,13 +655,13 @@ def run_sensitivity(cfg: Config, output_dir: Path, logger: logging.Logger) -> Li
     from joblib import Parallel, delayed
     
     # Fixed parameters in transition zone
-    pb_test = 0.20
-    pd_test = 0.05
+    pb_test = cfg.target_prey_birth
+    pd_test = cfg.target_prey_death
     
     jobs = []
     for sd in cfg.sensitivity_sd_values:
         for rep in range(cfg.sensitivity_replicates):
-            seed = int(sd * 100000) + rep
+            seed = generate_unique_seed(pb_test, pd_test, rep + 2000000)
             jobs.append((pb_test, pd_test, cfg.default_grid, seed, True, sd))
     
     logger.info(f"Sensitivity: {len(jobs)} simulations")
@@ -659,8 +685,8 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
     from joblib import Parallel, delayed
     
     # Fixed parameters near critical point
-    pb_test = 0.20
-    pd_test = 0.03
+    pb_test = cfg.target_prey_birth
+    pd_test = cfg.target_prey_death
     
     # Validation
     logger.info("=" * 60)
@@ -690,7 +716,7 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
         measurement_steps = int(cfg.measurement_steps * warmup_factor)
         
         for rep in range(cfg.fss_replicates):
-            seed = L * 1000 + rep
+            seed = generate_unique_seed(pb_test, pd_test, rep + 2000000)
             jobs.append((pb_test, pd_test, L, seed, warmup_steps, measurement_steps))
     
     logger.info(f"FSS: {len(jobs)} simulations")

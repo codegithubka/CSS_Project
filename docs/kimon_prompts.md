@@ -359,5 +359,7 @@ For parallel simulations, use different seeds per worker (e.g., base_seed + work
 
 6. Write a final smoke test for the HPC simulation. Tests module imports. numba kernel, a full mock simulation, the pcf computation, cluster measurement, seeding and the binary roundtrip for saving output.
 
-
 7. Use the attached legacy simulation function to compute benchmarking resukts for our optimization. Include functionality to save in a csv and plots showing the most significant results. Include flags to run with or without plots and csv output.
+
+
+8. Write a few run mock tests for the analysis file to see that the plots render properly.
