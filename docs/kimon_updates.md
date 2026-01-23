@@ -292,19 +292,11 @@ Options:
 2. Coarse initial parameter sweep grid
 3. Discard non-evo runs and use mean field baseline instead or the opposite
 
-NOTE: Without the optimization kernels for a 1000x1000 grid the simulation (using 50 reps for statistical power) would run for 548 hours (approximately 23 days)
+NOTE:
 
-### Results Dict
+Warmup and Measurement time must be scaled according to grid size. We need to write a method to estimate the approximate simulaiton time required. (Sary is working on that.)
 
-Add clustering size index.
-Pertrubtion on the prey count.
-Cluster size distribution mesauremnt.
 
-Sary:
-
-Bifuraction
-Clustering Measurement
-Warmpup and Measurement size
 
 
 
