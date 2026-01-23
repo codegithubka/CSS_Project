@@ -8,6 +8,8 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
+from scripts.numba_optimized import PPKernel, set_numba_seed
+from cluster_analysis import ClusterAnalyzer
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 # repeated imports and small array allocations in hot paths.
 _cached_ndimage = None
 _cached_kernels = {}
+
 
 class CA:
 	"""Base cellular automaton class.
@@ -93,6 +96,8 @@ class CA:
 		self._densities: Tuple[float, ...] = tuple(densities)
 		self.params: Dict[str, object] = dict(params) if params is not None else {}
 		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
+  
+		self._cluster_analyzer = ClusterAnalyzer(neighborhood=neighborhood)
 
 		# per-parameter evolve metadata and evolution state
 		# maps parameter name -> dict with keys 'sd','min','max','species'
@@ -230,152 +235,14 @@ class CA:
 			counts.append(neigh)
 		return tuple(counts)
 
-	class UnionFind:
-		"""Union-Find data structure for efficient cluster label management.
-		
-		Used internally by Hoshen-Kopelman algorithm to track label equivalences.
-		Implements path compression and union by rank for near-constant time operations.
-		"""
-		
-		def __init__(self):
-			self.parent = {}
-			self.rank = {}
-		
-		def make_set(self, x):
-			"""Create a new set containing only x."""
-			if x not in self.parent:
-				self.parent[x] = x
-				self.rank[x] = 0
-		
-		def find(self, x):
-			"""Find the root of x's set with path compression."""
-			if self.parent[x] != x:
-				self.parent[x] = self.find(self.parent[x])  # Path compression
-			return self.parent[x]
-		
-		def union(self, x, y):
-			"""Unite the sets containing x and y using union by rank."""
-			root_x = self.find(x)
-			root_y = self.find(y)
-			
-			if root_x == root_y:
-				return
-			
-			# Union by rank
-			if self.rank[root_x] < self.rank[root_y]:
-				self.parent[root_x] = root_y
-			elif self.rank[root_x] > self.rank[root_y]:
-				self.parent[root_y] = root_x
-			else:
-				self.parent[root_y] = root_x
-				self.rank[root_x] += 1
 
 	def detect_clusters(self, state: int = None) -> Tuple[np.ndarray, Dict[int, int]]:
-		"""Detect clusters using Hoshen-Kopelman algorithm with Union-Find.
-		
-		Identifies connected components (clusters) of occupied sites in the grid.
-		Uses the configured neighborhood type (Neumann or Moore) to determine
-		connectivity. Implements periodic boundary conditions.
-		
-		Args:
-			state (int, optional): Specific state value to cluster (1, 2, etc.).
-				If None, clusters all non-zero states together.
-		
-		Returns:
-			Tuple containing:
-			- labels (np.ndarray): 2D array same shape as grid, where each cell
-				contains its cluster label (0 for empty/non-target cells, positive
-				integers for cluster IDs). Cluster IDs are contiguous starting from 1.
-			- sizes (Dict[int, int]): Dictionary mapping cluster label -> cluster size
-				(number of sites in that cluster). Does not include label 0.
-		
-		Example:
-			>>> labels, sizes = ca.detect_clusters(state=1)  # Cluster only prey
-			>>> largest_cluster = max(sizes.values())
-			>>> print(f"Largest prey cluster: {largest_cluster} sites")
-		
-		Note:
-			This method scans the grid once (O(N)) and uses Union-Find for
-			efficient label management (O(N α(N)) where α is the inverse
-			Ackermann function, effectively constant). Topology emerges
-			implicitly from the connectivity rules - no explicit perimeter
-			or shape calculation is needed.
+		"""Detect clusters in the current grid.
+
+		See ClusterAnalyzer.detect_clusters() for full documentation.
 		"""
-		rows, cols = self.grid.shape
-		labels = np.zeros((rows, cols), dtype=int)
-		uf = self.UnionFind()
-		current_label = 1
-		
-		# Determine which cells to cluster
-		if state is None:
-			# Cluster all non-zero states together
-			mask = (self.grid != 0)
-		else:
-			# Cluster only the specified state
-			mask = (self.grid == state)
-		
-		# Define neighbor offsets based on neighborhood type
-		if self.neighborhood == "neumann":
-			# Check left and top (already scanned positions)
-			neighbor_offsets = [(-1, 0), (0, -1)]
-		else:  # moore
-			# Check top-left, top, top-right, and left (already scanned positions)
-			neighbor_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1)]
-		
-		# First pass: assign labels and record equivalences
-		for i in range(rows):
-			for j in range(cols):
-				if not mask[i, j]:
-					continue
-				
-				# Check already-scanned neighbors
-				neighbor_labels = []
-				for di, dj in neighbor_offsets:
-					ni = (i + di) % rows  # Periodic boundary
-					nj = (j + dj) % cols  # Periodic boundary
-					
-					if labels[ni, nj] > 0:
-						neighbor_labels.append(labels[ni, nj])
-				
-				if len(neighbor_labels) == 0:
-					# New cluster - assign new label
-					labels[i, j] = current_label
-					uf.make_set(current_label)
-					current_label += 1
-				else:
-					# Join existing cluster(s)
-					min_label = min(neighbor_labels)
-					labels[i, j] = min_label
-					
-					# Union all neighbor labels (they're all part of same cluster)
-					for label in neighbor_labels:
-						uf.make_set(label)
-						uf.union(min_label, label)
-		
-		# Second pass: resolve labels to their root and make contiguous
-		# Create mapping from old roots to new contiguous labels
-		root_to_new_label = {}
-		next_new_label = 1
-		
-		final_labels = np.zeros((rows, cols), dtype=int)
-		cluster_sizes = {}
-		
-		for i in range(rows):
-			for j in range(cols):
-				if labels[i, j] > 0:
-					root = uf.find(labels[i, j])
-					
-					# Assign contiguous label if not seen before
-					if root not in root_to_new_label:
-						root_to_new_label[root] = next_new_label
-						cluster_sizes[next_new_label] = 0
-						next_new_label += 1
-					
-					new_label = root_to_new_label[root]
-					final_labels[i, j] = new_label
-					cluster_sizes[new_label] += 1
-		
-		return final_labels, cluster_sizes
+		return self._cluster_analyzer.detect_clusters(self.grid, state=state)
+
 
 	def get_cluster_stats(self, state: int = None) -> Dict[str, object]:
 		"""Compute comprehensive cluster statistics for the current grid state.
@@ -400,85 +267,11 @@ class CA:
 			>>> print(f"Largest cluster: {stats['largest']} sites")
 			>>> print(f"Mean size: {stats['mean_size']:.2f}")
 		"""
-		labels, size_dict = self.detect_clusters(state=state)
-		
-		if len(size_dict) == 0:
-			return {
-				'n_clusters': 0,
-				'sizes': np.array([]),
-				'largest': 0,
-				'mean_size': 0.0,
-				'size_distribution': {},
-				'labels': labels,
-				'size_dict': size_dict
-			}
-		
-		sizes = np.array(list(size_dict.values()))
-		sizes_sorted = np.sort(sizes)[::-1]  # Descending order
-		
-		# Create size distribution (size -> count)
-		size_dist = {}
-		for s in sizes:
-			size_dist[s] = size_dist.get(s, 0) + 1
-		
-		return {
-			'n_clusters': len(size_dict),
-			'sizes': sizes_sorted,
-			'largest': int(np.max(sizes)),
-			'mean_size': float(np.mean(sizes)),
-			'size_distribution': size_dist,
-			'labels': labels,
-			'size_dict': size_dict
-		}
+		return self._cluster_analyzer.get_stats(self.grid, state=state)
 
 	def get_percolating_cluster(self, state: int = None, direction: str = 'both') -> Tuple[bool, int, np.ndarray]:
-		"""Detect whether a percolating cluster exists (spans the grid).
-		
-		A percolating cluster is one that connects opposite edges of the grid,
-		indicating a phase transition in percolation theory.
-		
-		Args:
-			state (int, optional): State to check for percolation. If None,
-				checks all non-zero states.
-			direction (str): Direction to check:
-				- 'horizontal': left-to-right spanning
-				- 'vertical': top-to-bottom spanning  
-				- 'both': either direction (default)
-		
-		Returns:
-			Tuple containing:
-			- percolates (bool): True if a percolating cluster exists
-			- cluster_label (int): Label of the percolating cluster (0 if none)
-			- labels (np.ndarray): Full cluster label array
-		
-		Example:
-			>>> percolates, label, labels = ca.get_percolating_cluster(state=1)
-			>>> if percolates:
-			>>>     print(f"Prey percolates! Cluster {label}")
-		"""
-		labels, size_dict = self.detect_clusters(state=state)
-		rows, cols = labels.shape
-		
-		percolating_labels = set()
-		
-		if direction in ('horizontal', 'both'):
-			# Check which clusters touch both left and right edges
-			left_labels = set(labels[:, 0][labels[:, 0] > 0])
-			right_labels = set(labels[:, -1][labels[:, -1] > 0])
-			percolating_labels.update(left_labels & right_labels)
-		
-		if direction in ('vertical', 'both'):
-			# Check which clusters touch both top and bottom edges
-			top_labels = set(labels[0, :][labels[0, :] > 0])
-			bottom_labels = set(labels[-1, :][labels[-1, :] > 0])
-			percolating_labels.update(top_labels & bottom_labels)
-		
-		if percolating_labels:
-			# Return the largest percolating cluster
-			perc_label = max(percolating_labels, key=lambda x: size_dict[x])
-			return True, perc_label, labels
-		else:
-			return False, 0, labels
+		"""Detect whether a percolating cluster exists (spans the grid)."""
+		return self._cluster_analyzer.check_percolation(self.grid, state=state, direction=direction)
 
 	def update(self) -> None:
 		"""Perform one update step.
@@ -1152,6 +945,7 @@ class PP(CA):
 		cell_params: Dict[str, object] = None,
 		seed: Optional[int] = None,
 		synchronous: bool = True,
+		directed_hunting: bool = False, # New directed hunting option
 	) -> None:
 		# Allowed params and defaults
 		_defaults = {
@@ -1185,8 +979,16 @@ class PP(CA):
 		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
 
 		self.synchronous: bool = bool(synchronous)
+		self.directed_hunting: bool = bool(directed_hunting)
+    
 		# set human-friendly species names for PP
 		self.species_names = ("prey", "predator")
+  
+		if seed is not None:
+			# This sets the seed for all @njit functions globally
+			set_numba_seed(seed)
+   
+		self._kernel = PPKernel(rows, cols, neighborhood, directed_hunting=directed_hunting)
 
 
 	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
@@ -1466,7 +1268,8 @@ class PP(CA):
 
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, new_state_val)
-
+   
+		
 		def _process_predator_hunting(sources, birth_param_key, birth_prob):
 			"""Handle predator reproduction with directed movement toward prey.
 			
@@ -1524,11 +1327,9 @@ class PP(CA):
 
 			# Flatten target indices to group collisions
 			target_flat = (nr * cols + nc).astype(np.int64)
-			# Sort targets to find groups that target the same cell
 			order = np.argsort(target_flat)
 			tf_sorted = target_flat[order]
 
-			# unique targets (on the sorted array) with start indices and counts
 			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
 			if uniq_targets.size == 0:
 				return
@@ -1540,14 +1341,11 @@ class PP(CA):
 				chosen_sorted_positions.append(start + off)
 			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
 
-			# Map back to indices in the filtered attempts array
 			chosen_indices = order[chosen_sorted_positions]
-
 			chosen_target_flats = target_flat[chosen_indices]
 			chosen_rs = (chosen_target_flats // cols).astype(int)
 			chosen_cs = (chosen_target_flats % cols).astype(int)
 
-			# Determine parent positions (predators) corresponding to chosen attempts
 			parents = src_valid[chosen_indices]
 
 			# Apply successful hunts: predators convert prey to predator
@@ -1556,100 +1354,37 @@ class PP(CA):
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, 2)
 
-		# Prey reproduce into empty cells (target state 0 -> new state 1)
-		prey_sources = np.argwhere(grid_ref == 1)
-		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
 
-		# Predators hunt and reproduce with directed movement toward prey
+		# Predators hunt with directed movement toward prey
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_predator_hunting(pred_sources, "predator_birth", self.params["predator_birth"])
+		if self.directed_hunting:
+			_process_predator_hunting(pred_sources, "predator_birth", self.params["predator_birth"])
+		else:
+			_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
-		"""Asynchronous (random-sequential) update with directed predator movement.
+		# Get the evolved prey death map
+		# Fallback to a full array of the global param if it doesn't exist yet
+		p_death_arr = self.cell_params.get("prey_death")
+		if p_death_arr is None:
+			p_death_arr = np.full(self.grid.shape, self.params["prey_death"], dtype=np.float64)
 
-		Rules (applied using a copy of the current grid for reference):
-		- Iterate occupied cells in random order.
-		- Prey (1): pick random neighbor; if neighbor was empty in copy,
-		  reproduce into it with probability `prey_birth`.
-		- Predator (2): check all neighbors for prey. If prey neighbors exist,
-		  pick one of them uniformly at random (directed hunt). Otherwise pick
-		  a random neighbor. If target is prey in reference copy, reproduce 
-		  (convert to predator) with probability `predator_birth`.
-		- After the reproduction loop, apply deaths synchronously using the
-		  copy as the reference so newly created individuals are not instantly
-		  killed. Deaths only remove individuals if the current cell still
-		  matches the species from the reference copy.
-		"""
-		# Bind hot attributes to locals for speed and clarity
-		grid = self.grid
-		gen = self.generator
-		params = self.params
-		cell_params = self.cell_params
-		rows, cols = grid.shape
-		grid_ref = grid.copy()
+		meta = self._evolve_info.get("prey_death", {"sd": 0.05, "min": 0.001, "max": 0.1})
 
-		# Sample and apply deaths first (based on the reference grid). Deaths
-		# are sampled from `grid_ref` so statistics remain identical.
-		rand_prey = gen.random(grid.shape)
-		rand_pred = gen.random(grid.shape)
-		self._apply_deaths_and_clear_params(grid_ref, rand_prey, rand_pred)
-
-		# Precompute neighbor shifts
-		dr_arr, dc_arr, n_shifts = self._neighbor_shifts()
-
-		# Get occupied cells from the original reference grid and shuffle.
-		# We iterate over `grid_ref` so that sources can die and reproduce
-		# in the same iteration, meaning we are order-agnostic.
-		occupied = np.argwhere(grid_ref != 0)
-		if occupied.size > 0:
-			order = gen.permutation(len(occupied))
-			for idx in order:
-				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
-				state = int(grid_ref[r, c])
-				
-				if state == 1:
-					# Prey: pick a random neighbor
-					nbi = int(gen.integers(0, n_shifts))
-					dr = int(dr_arr[nbi])
-					dc = int(dc_arr[nbi])
-					nr = (r + dr) % rows
-					nc = (c + dc) % cols
-					# Prey reproduces into empty neighbor (reference must be empty)
-					if grid_ref[nr, nc] == 0:
-						# per-parent birth prob
-						pval = self._get_parent_probs(np.array([[r, c]]), "prey_birth", float(params["prey_birth"]))[0]
-						if gen.random() < float(pval):
-							# birth: set new prey and inherit per-cell params (if any)
-							grid[nr, nc] = 1
-							# handle param clearing/inheritance for a single birth
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 1)
-				
-				elif state == 2:
-					# Predator: directed hunt toward prey
-					# Check all neighbors for prey
-					neighbors_r = (r + dr_arr) % rows
-					neighbors_c = (c + dc_arr) % cols
-					prey_neighbors = (grid_ref[neighbors_r, neighbors_c] == 1)
-					
-					if np.any(prey_neighbors):
-						# At least one prey neighbor: pick one uniformly at random
-						prey_indices = np.where(prey_neighbors)[0]
-						chosen_idx = int(gen.choice(prey_indices))
-					else:
-						# No prey visible: pick a random neighbor (explore)
-						chosen_idx = int(gen.integers(0, n_shifts))
-					
-					nr = int(neighbors_r[chosen_idx])
-					nc = int(neighbors_c[chosen_idx])
-					
-					# Predator reproduces into prey neighbor (reference must be prey)
-					if grid_ref[nr, nc] == 1:
-						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(params["predator_birth"]))[0]
-						if gen.random() < float(pval):
-							# predator converts prey -> predator: assign and handle params
-							grid[nr, nc] = 2
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 2)
-
+		# Call the optimized kernel (uses pre-allocated buffers)
+		self._kernel.update(
+			self.grid,
+			p_death_arr,
+			float(self.params["prey_birth"]),
+			float(self.params["prey_death"]),
+			float(self.params["predator_birth"]),
+			float(self.params["predator_death"]),
+			float(meta["sd"]),
+			float(meta["min"]),
+			float(meta["max"]),
+			self._evolution_stopped,
+		)
+    
 	def update(self) -> None:
 		"""Dispatch to synchronous or asynchronous update mode."""
 		if self.synchronous:

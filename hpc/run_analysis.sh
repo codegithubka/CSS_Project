@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=pp_evo
-#SBATCH --partition=rome
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
@@ -64,7 +64,7 @@ echo "Output directory: $OUTPUT_DIR"
 echo ""
 
 # Run the full analysis
-python3 pp_analysis.py \
+python3 -u scripts/pp_analysis.py \
     --mode full \
     --output $OUTPUT_DIR \
     --cores $SLURM_CPUS_PER_TASK

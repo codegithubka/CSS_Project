@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Tuple, List, Dict, Optional
@@ -181,10 +183,6 @@ class MeanFieldModel:
             "C_eq": C_eq,
             "net_growth": self.birth - d_r_values,
         }
-
-
-# FIXME: Add plotting utilities
-
 
 if __name__ == "__main__":
     print("Mean-Field Model Module")
