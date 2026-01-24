@@ -6,12 +6,13 @@ Reads saved results from pp_analysis.py and generate figures.
 Designed to run locally (not on HPC) for fast iteration.
 
 Usage:
-    python plot_pp_results.py results/               # All plots
-    python plot_pp_results.py results/ --phase-only  # Just phase diagrams
-    python plot_pp_results.py results/ --hydra-only  # Just Hydra analysis
-    python plot_pp_results.py results/ --pcf-only    # Just PCF analysis
-    python plot_pp_results.py results/ --fss-only    # Just FSS plots
-    python plot_pp_results.py results/ --dpi 300     # High-res for publication
+    python plot_pp_results.py results/                    # All plots
+    python plot_pp_results.py results/ --phase-only       # Just phase diagrams
+    python plot_pp_results.py results/ --hydra-only       # Just Hydra analysis
+    python plot_pp_results.py results/ --pcf-only         # Just PCF analysis
+    python plot_pp_results.py results/ --fss-only         # Just FSS plots
+    python plot_pp_results.py results/ --bifurcation-only # Just bifurcation diagram
+    python plot_pp_results.py results/ --dpi 300          # High-res for publication
 """
 
 import argparse
@@ -122,6 +123,34 @@ def load_sensitivity_results(results_dir: Path) -> List[Dict]:
     
     with open(sens_file, 'r') as f:
         return json.load(f)
+
+
+def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load bifurcation analysis results.
+    
+    Returns
+    -------
+    sweep_params : np.ndarray
+        1D array of control parameter values (prey death rates).
+    results : np.ndarray
+        2D array of shape (n_sweep, n_replicates) with population counts
+        at equilibrium.
+    """
+    npz_file = results_dir / "bifurcation_results.npz"
+    json_file = results_dir / "bifurcation_results.json"
+    
+    if npz_file.exists():
+        logging.info(f"Loading bifurcation results from {npz_file}")
+        data = np.load(npz_file)
+        return data['sweep_params'], data['results']
+    elif json_file.exists():
+        logging.info(f"Loading bifurcation results from {json_file}")
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        return np.array(data['sweep_params']), np.array(data['results'])
+    else:
+        raise FileNotFoundError(f"Bifurcation results not found in {results_dir}")
 
 
 # =============================================================================
@@ -546,6 +575,80 @@ def plot_fss_analysis(fss_results: List[Dict], output_dir: Path, dpi: int = 150)
     logging.info(f"Saved {output_file}")
 
 
+def plot_bifurcation_diagram(sweep_params: np.ndarray, results: np.ndarray,
+                             output_dir: Path, dpi: int = 150,
+                             control_label: str = "Prey Death Rate",
+                             population_label: str = "Population at Equilibrium"):
+    """
+    Generate a stochastic bifurcation diagram.
+    
+    Shows the distribution of equilibrium population counts as a function of
+    a control parameter (e.g., prey death rate), with scatter points for each
+    replicate run overlaid on summary statistics.
+    
+    Parameters
+    ----------
+    sweep_params : np.ndarray
+        1D array of control parameter values (e.g., prey death rates).
+        Shape: (n_sweep,)
+    results : np.ndarray
+        2D array of population counts at equilibrium.
+        Shape: (n_sweep, n_replicates) where rows correspond to sweep_params
+        and columns are replicate simulation runs.
+    output_dir : Path
+        Directory to save the output figure.
+    dpi : int
+        Output resolution (default: 150).
+    control_label : str
+        Label for x-axis (control parameter).
+    population_label : str
+        Label for y-axis (population count).
+    """
+    n_sweep, n_replicates = results.shape
+    
+    fig, ax = plt.subplots(figsize=(12, 7))
+    
+    # Scatter all individual replicates with transparency
+    for i, param in enumerate(sweep_params):
+        ax.scatter(
+            np.full(n_replicates, param),
+            results[i, :],
+            alpha=0.3, s=15, c='steelblue', edgecolors='none'
+        )
+    
+    # Compute summary statistics
+    means = np.mean(results, axis=1)
+    medians = np.median(results, axis=1)
+    q25 = np.percentile(results, 25, axis=1)
+    q75 = np.percentile(results, 75, axis=1)
+    
+    # Plot median line and IQR envelope
+    ax.fill_between(sweep_params, q25, q75, alpha=0.25, color='coral',
+                    label='IQR (25th-75th percentile)')
+    ax.plot(sweep_params, medians, 'o-', color='darkred', linewidth=2,
+            markersize=5, label='Median')
+    ax.plot(sweep_params, means, 's--', color='black', linewidth=1.5,
+            markersize=4, alpha=0.7, label='Mean')
+    
+    ax.set_xlabel(control_label)
+    ax.set_ylabel(population_label)
+    ax.set_title(f"Stochastic Bifurcation Diagram\n({n_replicates} replicates per parameter value)")
+    ax.legend(loc='best')
+    ax.grid(True, alpha=0.3)
+    
+    # Add rug plot at bottom showing parameter sampling density
+    ax.plot(sweep_params, np.zeros_like(sweep_params), '|', color='gray',
+            markersize=10, alpha=0.5)
+    
+    plt.tight_layout()
+    output_file = output_dir / "bifurcation_diagram.png"
+    plt.savefig(output_file, dpi=dpi)
+    plt.close()
+    logging.info(f"Saved {output_file}")
+    
+    return output_file
+
+
 def plot_sensitivity_analysis(sens_results: List[Dict], output_dir: Path, dpi: int = 150):
     """Generate evolution sensitivity analysis plots."""
     # Group by evolve_sd
@@ -694,6 +797,8 @@ Examples:
                        help='Generate only FSS plots')
     parser.add_argument('--sensitivity-only', action='store_true',
                        help='Generate only sensitivity analysis plots')
+    parser.add_argument('--bifurcation-only', action='store_true',
+                       help='Generate only bifurcation diagram')
     parser.add_argument('--dpi', type=int, default=150,
                        help='Output resolution (default: 150)')
     parser.add_argument('--output', type=Path, default=None,
@@ -720,7 +825,7 @@ Examples:
     
     # Determine what to plot
     plot_all = not any([args.phase_only, args.hydra_only, args.pcf_only,
-                        args.fss_only, args.sensitivity_only])
+                        args.fss_only, args.sensitivity_only, args.bifurcation_only])
     
     # Main sweep plots
     if plot_all or args.phase_only or args.hydra_only or args.pcf_only:
@@ -778,6 +883,16 @@ Examples:
             plot_sensitivity_analysis(sens_results, output_dir, args.dpi)
         except FileNotFoundError as e:
             logging.warning(f"Sensitivity results not found: {e}")
+    
+    # Bifurcation diagram
+    if plot_all or args.bifurcation_only:
+        try:
+            sweep_params, bifurc_results = load_bifurcation_results(results_dir)
+            logging.info(f"Loaded bifurcation results: {len(sweep_params)} sweep values, "
+                        f"{bifurc_results.shape[1]} replicates each")
+            plot_bifurcation_diagram(sweep_params, bifurc_results, output_dir, args.dpi)
+        except FileNotFoundError as e:
+            logging.warning(f"Bifurcation results not found: {e}")
     
     logging.info("Done!")
 
