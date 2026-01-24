@@ -79,7 +79,7 @@ def run_test(name: str, func, *args, **kwargs):
 def test_imports():
     """Test that all required modules import correctly."""
     log("Importing numba_optimized...", "RUN")
-    from scripts.numba_optimized import (
+    from models.numba_optimized import (
         PPKernel,
         compute_all_pcfs_fast,
         measure_cluster_sizes_fast,
@@ -95,7 +95,7 @@ def test_imports():
     from models.CA import PP, set_numba_seed as ca_seed
     
     log("Importing pp_analysis...", "RUN")
-    from scripts.pp_analysis import (
+    from scripts.experiments import (
         Config,
         run_single_simulation,
         count_populations,
@@ -107,7 +107,7 @@ def test_imports():
 
 def test_numba_kernel_random():
     """Test Numba kernel with random movement."""
-    from scripts.numba_optimized import PPKernel, set_numba_seed
+    from models.numba_optimized import PPKernel, set_numba_seed
     
     log("Creating kernel (directed_hunting=False)...", "RUN")
     kernel = PPKernel(50, 50, "moore", directed_hunting=False)
@@ -149,7 +149,7 @@ def test_numba_kernel_random():
 
 def test_numba_kernel_directed():
     """Test Numba kernel with directed hunting."""
-    from scripts.numba_optimized import PPKernel, set_numba_seed
+    from models.numba_optimized import PPKernel, set_numba_seed
     
     log("Creating kernel (directed_hunting=True)...", "RUN")
     kernel = PPKernel(50, 50, "moore", directed_hunting=True)
@@ -185,7 +185,7 @@ def test_numba_kernel_directed():
 def test_ca_model_random():
     """Test CA PP model with random movement."""
     from models.CA import PP
-    from scripts.numba_optimized import set_numba_seed
+    from models.numba_optimized import set_numba_seed
     
     log("Creating PP model (directed_hunting=False)...", "RUN")
     np.random.seed(42)
@@ -224,7 +224,7 @@ def test_ca_model_random():
 def test_ca_model_directed():
     """Test CA PP model with directed hunting."""
     from models.CA import PP
-    from scripts.numba_optimized import set_numba_seed
+    from models.numba_optimized import set_numba_seed
     
     log("Creating PP model (directed_hunting=True)...", "RUN")
     np.random.seed(42)
@@ -263,7 +263,7 @@ def test_ca_model_directed():
 def test_ca_model_with_evolution():
     """Test CA PP model with evolution enabled."""
     from models.CA import PP
-    from scripts.numba_optimized import set_numba_seed
+    from models.numba_optimized import set_numba_seed
     
     log("Creating PP model with evolution...", "RUN")
     np.random.seed(42)
@@ -309,8 +309,8 @@ def test_ca_model_with_evolution():
 
 def test_full_simulation_pipeline():
     """Test the full simulation pipeline via run_single_simulation."""
-    from scripts.pp_analysis import Config, run_single_simulation
-    from scripts.numba_optimized import set_numba_seed
+    from scripts.experiments import Config, run_single_simulation
+    from models.numba_optimized import set_numba_seed
     
     log("Creating fast config...", "RUN")
     cfg = Config()
@@ -368,7 +368,7 @@ def test_full_simulation_pipeline():
 
 def test_pcf_computation():
     """Test PCF computation."""
-    from scripts.numba_optimized import compute_all_pcfs_fast, set_numba_seed
+    from models.numba_optimized import compute_all_pcfs_fast, set_numba_seed
     
     log("Creating test grid...", "RUN")
     np.random.seed(42)
@@ -401,7 +401,7 @@ def test_pcf_computation():
 
 def test_cluster_measurement():
     """Test cluster size measurement."""
-    from scripts.numba_optimized import measure_cluster_sizes_fast
+    from models.numba_optimized import measure_cluster_sizes_fast
     
     log("Creating grid with known clusters...", "RUN")
     grid = np.zeros((30, 30), dtype=np.int32)
@@ -436,7 +436,7 @@ def test_cluster_measurement():
 
 def test_reproducibility():
     """Test that seeding produces reproducible results."""
-    from scripts.numba_optimized import PPKernel, set_numba_seed
+    from models.numba_optimized import PPKernel, set_numba_seed
     
     log("Running simulation twice with same seed...", "RUN")
     
@@ -478,7 +478,7 @@ def test_reproducibility():
 
 def test_binary_save_load():
     """Test binary save/load roundtrip."""
-    from scripts.pp_analysis import save_sweep_binary, load_sweep_binary
+    from scripts.experiments import save_sweep_binary, load_sweep_binary
     
     log("Creating test results...", "RUN")
     results = [
@@ -516,7 +516,7 @@ def test_binary_save_load():
 
 def test_hunting_dynamics_comparison():
     """Compare dynamics between random and directed hunting."""
-    from scripts.numba_optimized import PPKernel, set_numba_seed
+    from models.numba_optimized import PPKernel, set_numba_seed
     
     log("Setting up comparison...", "RUN")
     

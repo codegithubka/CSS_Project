@@ -37,7 +37,7 @@ import numpy as np
 
 # Try to import optimized modules
 try:
-    from scripts.numba_optimized import (
+    from models.numba_optimized import (
         PPKernel,
         compute_pcf_periodic_fast,
         compute_all_pcfs_fast,

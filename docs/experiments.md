@@ -4,9 +4,11 @@ This is what should be measured each run. These runs can then be further aggrega
 - Population count (mean and std after warmup)
 - Cluster size distribution (means and stds after warmup)
 ### Evolution runs
-- Population count (over time after warmup)
-- Cluster size distribution (over time after warmup)
-- Prey death rate (mean and std over time after warmup)
+It is important to scrutenize whether these should be time-series or steady state values.
+- Population count (time series after warmup)
+- Cluster size distribution (time series after warmup)
+- Prey death rate (time series mean and std after warmup)
+
 # Experiments
 These phases should be completed sequentially, deepening our understanding at each step. The different experiments in each phase should be completed with data from the same runs.
 ### Phase 1: finding the critical point
@@ -14,15 +16,46 @@ These phases should be completed sequentially, deepening our understanding at ea
 	- Look for critical transition
 - Create log-log plot of cluster size distribution, varying prey death rate
 	- Look for power-law
-### Phase 2: sensitivity analysis
+### Phase 2: finite-size scaling
+- Sweep of grid sizes at critical point
+	- Check for power-law cut-offs
+### Phase 3: sensitivity analysis
 - Show correlation between critical prey death rate and post-evolution prey death rate, varying other parameters
 	- Look for self-organized criticality: an SOC-system should move towards the critical point regardless of other parameters
 - Show sensitivity of hydra effect varying other parameters
-### Phase 3: perturbation analysis
+### Phase 4: perturbation analysis
 - Create autocorrelation plot of mean population count, following perturbations around the critical point
 	- Look for critical slowing down: perturbations to states closer to the critical point should more slowly return to the steady state
-### Phase 4: model extensions
+	- This requires time series data
+### Phase 5: model extensions
 - Investigate whether hydra effect and SOC still occur with diffusion and directed movement
+
+# Todo
+The main functionality is all complete. Thus, the models folder should be relatively untouched.
+However, it is important to standardize experiments and analysis. The following files should be used for this.
+These files should contain very little (if any) functionality outside of what is listed here.
+### experiments.py
+This is the file that will be run on the cluster and should generate all experiment data.
+- General config class to setup experiments (grid size, parameters, sweep, evolution, repetitions, etc.)
+- Config objects for each phase (see phases above)
+- Function that runs the experiment based on a config object (calls run_single_simulation in parallel)
+	- Should save results to results folder (which can then be used by analysis.py)
+- Function that runs a single simulation, saving all necessary results
+	- This needs functionality to run a predetermined amount of time with a warmup
+	- And needs functionality to dynamically run until it has found a steady state
+- Should not contain any analysis (power-law fitting, bifurcation, etc.)
+	- Exception to this is the PCF data
+- Function to estimate runtime (already exists)
+- Should have argparse functionality to choose which phase to execute
+- Nice-to-have: argparse functionality to create new config object for arbitrary experiments
+### analysis.py
+This is the file that will generate our plots and statistics for the analysis.
+- Function to create bifurcation diagram to find critical point
+- Function to create log-log plot to check for power-law
+	- Should also fit a power-function to the data (see scrips/experiments.fit_truncated_power_law)
+- Function to calculate/ show similarity between post-evolution prey death rates and critical points
+- Function for sensitivity analysis
+- Function for perturbation analysis
 
 ---
 
