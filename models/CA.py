@@ -8,6 +8,8 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
+from scripts.numba_optimized import PPKernel, set_numba_seed
+from cluster_analysis import ClusterAnalyzer
 
 # Module logger
 logger = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ logger = logging.getLogger(__name__)
 # repeated imports and small array allocations in hot paths.
 _cached_ndimage = None
 _cached_kernels = {}
+
 
 class CA:
 	"""Base cellular automaton class.
@@ -93,6 +96,8 @@ class CA:
 		self._densities: Tuple[float, ...] = tuple(densities)
 		self.params: Dict[str, object] = dict(params) if params is not None else {}
 		self.cell_params: Dict[str, object] = dict(cell_params) if cell_params is not None else {}
+  
+		self._cluster_analyzer = ClusterAnalyzer(neighborhood=neighborhood)
 
 		# per-parameter evolve metadata and evolution state
 		# maps parameter name -> dict with keys 'sd','min','max','species'
@@ -230,6 +235,44 @@ class CA:
 			counts.append(neigh)
 		return tuple(counts)
 
+
+	def detect_clusters(self, state: int = None) -> Tuple[np.ndarray, Dict[int, int]]:
+		"""Detect clusters in the current grid.
+
+		See ClusterAnalyzer.detect_clusters() for full documentation.
+		"""
+		return self._cluster_analyzer.detect_clusters(self.grid, state=state)
+
+
+	def get_cluster_stats(self, state: int = None) -> Dict[str, object]:
+		"""Compute comprehensive cluster statistics for the current grid state.
+		
+		Args:
+			state (int, optional): Specific state to analyze. If None, analyzes
+				all non-zero states together.
+		
+		Returns:
+			Dictionary containing:
+			- 'n_clusters' (int): Total number of distinct clusters
+			- 'sizes' (np.ndarray): Array of cluster sizes, sorted descending
+			- 'largest' (int): Size of the largest cluster
+			- 'mean_size' (float): Mean cluster size
+			- 'size_distribution' (Dict[int, int]): Histogram mapping size -> count
+			- 'labels' (np.ndarray): Cluster label array from detect_clusters
+			- 'size_dict' (Dict[int, int]): Cluster label -> size mapping
+		
+		Example:
+			>>> stats = ca.get_cluster_stats(state=1)
+			>>> print(f"Found {stats['n_clusters']} prey clusters")
+			>>> print(f"Largest cluster: {stats['largest']} sites")
+			>>> print(f"Mean size: {stats['mean_size']:.2f}")
+		"""
+		return self._cluster_analyzer.get_stats(self.grid, state=state)
+
+	def get_percolating_cluster(self, state: int = None, direction: str = 'both') -> Tuple[bool, int, np.ndarray]:
+		"""Detect whether a percolating cluster exists (spans the grid)."""
+		return self._cluster_analyzer.check_percolation(self.grid, state=state, direction=direction)
+
 	def update(self) -> None:
 		"""Perform one update step.
 
@@ -297,6 +340,7 @@ class CA:
 		show_cell_params: bool = False,
 		show_neighbors: bool = True,
 		downsample: Optional[int] = None,
+		show_clusters: bool = True,       
 		) -> None:
 		"""Enable interactive visualization of the grid.
 
@@ -319,6 +363,8 @@ class CA:
 		except ImportError as e:
 			# Matplotlib is required for interactive visualization
 			raise ImportError("matplotlib is required for visualize(); install matplotlib") from e
+		
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
 
 		# Keep a reference to pyplot so _viz_update can use it without importing
 		self._viz_plt = plt
@@ -413,22 +459,33 @@ class CA:
 			_ds = _ds_auto
 		else:
 			_ds = max(1, int(downsample))
-		# initialize histogram: compute neighbor counts for prey
-		n_neighbors = 4 if self.neighborhood == "neumann" else 8
-		counts = self.count_neighbors()[0]
-		prey_pos = (self.grid == 1)
+
+		# initialize cluster size distribution plot
 		if show_neighbors:
-			if np.any(prey_pos):
-				vals = counts[prey_pos]
-			else:
-				vals = np.array([], dtype=int)
-			bins = np.arange(n_neighbors + 1)
-			hist_vals = np.bincount(vals, minlength=n_neighbors + 1)
-			bars = ax_hist.bar(bins, hist_vals, align='center')
-			ax_hist.set_xlabel('Prey neighbor count')
-			ax_hist.set_ylabel('Number of prey')
+			# Get initial cluster statistics
+			try:
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = list(size_dist.keys())
+					counts = list(size_dist.values())
+					scatter = ax_hist.scatter(sizes, counts, s=50, alpha=0.6, c='green', edgecolors='black')
+				else:
+					scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
+				ax_hist.set_title('Prey Cluster Size Distribution')
+				ax_hist.set_xscale('log')
+				ax_hist.set_yscale('log')
+				ax_hist.grid(True, alpha=0.3)
+			except Exception:
+				scatter = ax_hist.scatter([], [], s=50, alpha=0.6, c='green', edgecolors='black')
+				ax_hist.set_xlabel('Cluster size s')
+				ax_hist.set_ylabel('Number of clusters n(s)')
 		else:
-			bars = []
+			scatter = None
 
 		# states image (downsampled for display)
 		grid_disp = self.grid[::_ds, ::_ds]
@@ -519,6 +576,7 @@ class CA:
 			ax_percentiles.set_xlabel('Iteration')
 			ax_percentiles.set_ylabel('Neighbor count')
 			ax_percentiles.legend()
+
 		# initialize percentiles xlim/ylim (only when axis exists)
 		if ax_percentiles is not None:
 			ax_percentiles.set_xlim(0, 1)
@@ -575,7 +633,7 @@ class CA:
 			"im_states": im_states,
 			"param_imps": param_imps,
 			"param_cbs": param_cbs,
-			"hist_bars": bars,
+			"hist_bars": scatter,
 			"state_lines": (line_prey, line_pred),
 			"perc_lines": (line_25, line_mean, line_75),
 			"param_stat_lines": param_stat_lines,
@@ -593,6 +651,18 @@ class CA:
 		self._viz_ds = _ds
 		# precompute a slice tuple for downsampled display indexing
 		self._viz_slice = (slice(None, None, _ds), slice(None, None, _ds))
+
+		# Initialize cluster tracking                    # <- START NEW CODE
+		self._viz_show_clusters = show_clusters
+		if show_clusters:
+			self._viz_cluster_stats = {
+				'prey_n_clusters': [],
+				'prey_largest': [],
+				'prey_mean': [],
+				'pred_n_clusters': [],
+				'pred_largest': [],
+				'pred_mean': []
+			}
 
 		plt.show(block=False)
 		# draw once to populate the renderer
@@ -625,6 +695,9 @@ class CA:
 		if (iteration % int(self._viz_interval)) != 0:
 			return
 
+		n_neighbors = 4 if self.neighborhood == "neumann" else 8
+
+
 		# pyplot is provided via visualize(); avoid importing here for performance
 		plt = getattr(self, "_viz_plt", None)
 
@@ -646,27 +719,51 @@ class CA:
 			_vslice = getattr(self, "_viz_slice", (slice(None, None, _ds), slice(None, None, _ds)))
 			im_states.set_data(grid[_vslice])
 
-		# update histogram of prey neighbor counts
-		counts = self.count_neighbors()[0]
-		prey_mask = (grid == 1)
-		if np.any(prey_mask):
-			vals = counts[prey_mask]
-		else:
-			vals = np.array([], dtype=int)
-		nn = 4 if self.neighborhood == "neumann" else 8
-		hist_vals = np.bincount(vals, minlength=nn + 1)
-		bars = art.get("hist_bars")
-		if bars is not None:
-			for rect, h in zip(bars, hist_vals):
-				rect.set_height(h)
+		# update cluster size distribution
+		scatter = art.get("cluster_scatter")
+		if scatter is not None:
+			try:
+				# Get current cluster size distribution
+				prey_stats = self.get_cluster_stats(state=1)
+				size_dist = prey_stats['size_distribution']
+				
+				if size_dist:
+					sizes = np.array(list(size_dist.keys()))
+					counts = np.array(list(size_dist.values()))
+					
+					# Update scatter plot data
+					scatter.set_offsets(np.c_[sizes, counts])
+					
+					# Update axis limits dynamically
+					ax_hist = self._viz_axes.get("hist")
+					if ax_hist is not None:
+						# Set reasonable limits with some padding
+						if len(sizes) > 0:
+							ax_hist.set_xlim(0.5, max(sizes) * 1.5)
+							ax_hist.set_ylim(0.5, max(counts) * 1.5)
+			except Exception:
+				pass
 
-		# compute percentiles
-		if vals.size > 0:
-			p25 = float(np.percentile(vals, 25))
-			pmean = float(np.mean(vals))
-			p75 = float(np.percentile(vals, 75))
-		else:
-			p25 = pmean = p75 = 0.0
+		# compute percentiles (kept for compatibility, but not used for clusters)
+		p25 = pmean = p75 = 0.0
+
+		# Compute cluster statistics if enabled         # <- START NEW CODE
+		if getattr(self, "_viz_show_clusters", False):
+			try:
+				# Get prey cluster statistics
+				prey_stats = self.get_cluster_stats(state=1)
+				self._viz_cluster_stats['prey_n_clusters'].append(prey_stats['n_clusters'])
+				self._viz_cluster_stats['prey_largest'].append(prey_stats['largest'])
+				self._viz_cluster_stats['prey_mean'].append(prey_stats['mean_size'])
+				
+				# Get predator cluster statistics
+				pred_stats = self.get_cluster_stats(state=2)
+				self._viz_cluster_stats['pred_n_clusters'].append(pred_stats['n_clusters'])
+				self._viz_cluster_stats['pred_largest'].append(pred_stats['largest'])
+				self._viz_cluster_stats['pred_mean'].append(pred_stats['mean_size'])
+			except Exception:
+				
+				pass
 
 		# update time series data (append)
 		self._viz_time.append(iteration)
@@ -703,10 +800,11 @@ class CA:
 		if l75 is not None:
 			l75.set_data(self._viz_time, self._viz_neighbor_stats["75"])
 		# keep fixed y-limits for percentiles (if axis exists)
+
 		if len(self._viz_time) > 0:
 			axp = self._viz_axes.get("percentiles")
 			if axp is not None:
-				axp.set_ylim(0, nn)
+				axp.set_ylim(0, n_neighbors)
 				# expand xlim incrementally
 				cur_xmax = axp.get_xlim()[1]
 				if iteration > cur_xmax:
@@ -770,8 +868,9 @@ class CA:
 					if im is not None:
 						im.axes.draw_artist(im)
 				# histogram bars
-				for rect in art.get("hist_bars", []):
-					rect.axes.draw_artist(rect)
+				scatter = art.get("cluster_scatter")
+				if scatter is not None:
+					scatter.axes.draw_artist(scatter)
 				# state lines
 				for ln in art.get("state_lines", ()): 
 					if ln is not None:
@@ -846,6 +945,7 @@ class PP(CA):
 		cell_params: Dict[str, object] = None,
 		seed: Optional[int] = None,
 		synchronous: bool = True,
+		directed_hunting: bool = False, # New directed hunting option
 	) -> None:
 		# Allowed params and defaults
 		_defaults = {
@@ -879,8 +979,16 @@ class PP(CA):
 		super().__init__(rows, cols, densities, neighborhood, merged_params, cell_params, seed)
 
 		self.synchronous: bool = bool(synchronous)
+		self.directed_hunting: bool = bool(directed_hunting)
+    
 		# set human-friendly species names for PP
 		self.species_names = ("prey", "predator")
+  
+		if seed is not None:
+			# This sets the seed for all @njit functions globally
+			set_numba_seed(seed)
+   
+		self._kernel = PPKernel(rows, cols, neighborhood, directed_hunting=directed_hunting)
 
 
 	# Remove PP-specific evolve wrapper; use CA.evolve with optional species
@@ -1056,11 +1164,16 @@ class PP(CA):
 		Implements a vectorized equivalent of the random-sequential
 		asynchronous update. Each occupied cell (prey or predator) gets at
 		most one reproduction attempt: with probability `birth` it chooses a
-		random neighbor and, if that neighbor in the reference grid has the
+		neighbor and, if that neighbor in the reference grid has the
 		required target state (empty for prey, prey for predator), it
-		becomes a candidate attempt. When multiple reproducers target the
-		same cell, one attempt is chosen uniformly at random to succeed.
-		Deaths are applied the same vectorized way as in the async update.
+		becomes a candidate attempt. 
+		
+		Predators use directed movement: they preferentially move toward
+		prey neighbors when available; otherwise pick a random neighbor.
+		
+		When multiple reproducers target the same cell, one attempt is 
+		chosen uniformly at random to succeed. Deaths are applied the same 
+		vectorized way as in the async update.
 		"""
 
 		# Assumes any per-cell parameter arrays (in `self.cell_params`) are
@@ -1155,80 +1268,123 @@ class PP(CA):
 
 			# Handle inheritance/clearing of per-cell parameters
 			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, new_state_val)
+   
+		
+		def _process_predator_hunting(sources, birth_param_key, birth_prob):
+			"""Handle predator reproduction with directed movement toward prey.
+			
+			Predators check all neighbors: if any neighbor contains prey, 
+			preferentially move to one of them; otherwise pick a random neighbor.
+			"""
+			if sources.size == 0:
+				return
 
-		# Prey reproduce into empty cells (target state 0 -> new state 1)
-		prey_sources = np.argwhere(grid_ref == 1)
-		_process_reproduction(prey_sources, "prey_birth", self.params["prey_birth"], 0, 1)
+			M = sources.shape[0]
+			# Determine per-source birth probabilities (from cell_params if present)
+			parent_probs = self._get_parent_probs(sources, birth_param_key, birth_prob)
 
-		# Predators reproduce into prey cells (target state 1 -> new state 2)
+			# Which sources attempt reproduction
+			attempt_mask = gen.random(M) < parent_probs
+			if not np.any(attempt_mask):
+				return
+
+			src = sources[attempt_mask]
+			K = src.shape[0]
+
+			# For each predator, check all neighbors to find prey
+			selected_neighbors = np.zeros((K, 2), dtype=int)
+			
+			for i in range(K):
+				r, c = int(src[i, 0]), int(src[i, 1])
+				# Get all neighbor positions
+				neighbors_r = (r + dr_arr) % rows
+				neighbors_c = (c + dc_arr) % cols
+				# Check which neighbors have prey
+				prey_neighbors = (grid_ref[neighbors_r, neighbors_c] == 1)
+				
+				if np.any(prey_neighbors):
+					# Pick one prey neighbor uniformly at random (directed movement)
+					prey_indices = np.where(prey_neighbors)[0]
+					chosen_idx = int(gen.choice(prey_indices))
+				else:
+					# No prey visible; pick a random neighbor
+					chosen_idx = int(gen.integers(0, n_shifts))
+				
+				selected_neighbors[i, 0] = neighbors_r[chosen_idx]
+				selected_neighbors[i, 1] = neighbors_c[chosen_idx]
+
+			nr = selected_neighbors[:, 0]
+			nc = selected_neighbors[:, 1]
+
+			# Only keep attempts where the target was prey (required state = 1)
+			valid_mask = (grid_ref[nr, nc] == 1)
+			if not np.any(valid_mask):
+				return
+
+			src_valid = src[valid_mask]
+			nr = nr[valid_mask]
+			nc = nc[valid_mask]
+
+			# Flatten target indices to group collisions
+			target_flat = (nr * cols + nc).astype(np.int64)
+			order = np.argsort(target_flat)
+			tf_sorted = target_flat[order]
+
+			uniq_targets, idx_start, counts = np.unique(tf_sorted, return_index=True, return_counts=True)
+			if uniq_targets.size == 0:
+				return
+
+			# For each unique target, pick one predator uniformly at random
+			chosen_sorted_positions = []
+			for start, cnt in zip(idx_start, counts):
+				off = int(gen.integers(0, cnt))
+				chosen_sorted_positions.append(start + off)
+			chosen_sorted_positions = np.array(chosen_sorted_positions, dtype=int)
+
+			chosen_indices = order[chosen_sorted_positions]
+			chosen_target_flats = target_flat[chosen_indices]
+			chosen_rs = (chosen_target_flats // cols).astype(int)
+			chosen_cs = (chosen_target_flats % cols).astype(int)
+
+			parents = src_valid[chosen_indices]
+
+			# Apply successful hunts: predators convert prey to predator
+			grid[chosen_rs, chosen_cs] = 2
+
+			# Handle inheritance/clearing of per-cell parameters
+			self._inherit_params_on_birth(chosen_rs, chosen_cs, parents, 2)
+
+
+		# Predators hunt with directed movement toward prey
 		pred_sources = np.argwhere(grid_ref == 2)
-		_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
+		if self.directed_hunting:
+			_process_predator_hunting(pred_sources, "predator_birth", self.params["predator_birth"])
+		else:
+			_process_reproduction(pred_sources, "predator_birth", self.params["predator_birth"], 1, 2)
 
 	def update_async(self) -> None:
-		"""Asynchronous (random-sequential) update.
+		# Get the evolved prey death map
+		# Fallback to a full array of the global param if it doesn't exist yet
+		p_death_arr = self.cell_params.get("prey_death")
+		if p_death_arr is None:
+			p_death_arr = np.full(self.grid.shape, self.params["prey_death"], dtype=np.float64)
 
-		Rules (applied using a copy of the current grid for reference):
-		- Iterate occupied cells in random order.
-		- Prey (1): pick random neighbor; if neighbor was empty in copy,
-		  reproduce into it with probability `prey_birth`.
-		- Predator (2): pick random neighbor; if neighbor was prey in copy,
-		  reproduce into it (convert to predator) with probability `predator_birth`.
-		- After the reproduction loop, apply deaths synchronously using the
-		  copy as the reference so newly created individuals are not instantly
-		  killed. Deaths only remove individuals if the current cell still
-		  matches the species from the reference copy.
-		"""
-		# Bind hot attributes to locals for speed and clarity
-		grid = self.grid
-		gen = self.generator
-		params = self.params
-		cell_params = self.cell_params
-		rows, cols = grid.shape
-		grid_ref = grid.copy()
+		meta = self._evolve_info.get("prey_death", {"sd": 0.05, "min": 0.001, "max": 0.1})
 
-		# Sample and apply deaths first (based on the reference grid). Deaths
-		# are sampled from `grid_ref` so statistics remain identical.
-		rand_prey = gen.random(grid.shape)
-		rand_pred = gen.random(grid.shape)
-		self._apply_deaths_and_clear_params(grid_ref, rand_prey, rand_pred)
-
-		# Precompute neighbor shifts
-		dr_arr, dc_arr, n_shifts = self._neighbor_shifts()
-
-		# Get occupied cells from the original reference grid and shuffle.
-		# We iterate over `grid_ref` so that sources can die and reproduce
-		# in the same iteration, meaning we are order-agnostic.
-		occupied = np.argwhere(grid_ref != 0)
-		if occupied.size > 0:
-			order = gen.permutation(len(occupied))
-			for idx in order:
-				r, c = int(occupied[idx, 0]), int(occupied[idx, 1])
-				state = int(grid_ref[r, c])
-				# pick a random neighbor shift
-				nbi = int(gen.integers(0, n_shifts))
-				dr = int(dr_arr[nbi])
-				dc = int(dc_arr[nbi])
-				nr = (r + dr) % rows
-				nc = (c + dc) % cols
-				if state == 1:
-					# Prey reproduces into empty neighbor (reference must be empty)
-					if grid_ref[nr, nc] == 0:
-						# per-parent birth prob
-						pval = self._get_parent_probs(np.array([[r, c]]), "prey_birth", float(params["prey_birth"]))[0]
-						if gen.random() < float(pval):
-							# birth: set new prey and inherit per-cell params (if any)
-							grid[nr, nc] = 1
-							# handle param clearing/inheritance for a single birth
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 1)
-				elif state == 2:
-					# Predator reproduces into prey neighbor (reference must be prey)
-					if grid_ref[nr, nc] == 1:
-						pval = self._get_parent_probs(np.array([[r, c]]), "predator_birth", float(params["predator_birth"]))[0]
-						if gen.random() < float(pval):
-							# predator converts prey -> predator: assign and handle params
-							grid[nr, nc] = 2
-							self._inherit_params_on_birth(np.array([nr]), np.array([nc]), np.array([[r, c]]), 2)
-
+		# Call the optimized kernel (uses pre-allocated buffers)
+		self._kernel.update(
+			self.grid,
+			p_death_arr,
+			float(self.params["prey_birth"]),
+			float(self.params["prey_death"]),
+			float(self.params["predator_birth"]),
+			float(self.params["predator_death"]),
+			float(meta["sd"]),
+			float(meta["min"]),
+			float(meta["max"]),
+			self._evolution_stopped,
+		)
+    
 	def update(self) -> None:
 		"""Dispatch to synchronous or asynchronous update mode."""
 		if self.synchronous:
