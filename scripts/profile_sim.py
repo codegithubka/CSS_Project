@@ -4,7 +4,7 @@ import sys
 
 # Ensure we can find our modules
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from pp_analysis import Config, run_single_simulation
+from scripts.experiments import Config, run_single_simulation
 
 # 1. Setup a single simulation configuration
 cfg = Config()

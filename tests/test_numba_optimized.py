@@ -22,7 +22,7 @@ for p in [project_root, scripts_dir]:
 
 # Import module under test
 try:
-    from scripts.numba_optimized import (
+    from models.numba_optimized import (
         NUMBA_AVAILABLE,
         PPKernel,
         compute_pcf_periodic_fast,
@@ -32,7 +32,7 @@ try:
         set_numba_seed
     )
 except ImportError:
-    from scripts.numba_optimized import (
+    from models.numba_optimized import (
         NUMBA_AVAILABLE,
         PPKernel,
         compute_pcf_periodic_fast,

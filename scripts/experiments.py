@@ -55,7 +55,7 @@ warnings.filterwarnings("ignore")
 
 # Import optimized Numba functions
 try:
-    from scripts.numba_optimized import (
+    from models.numba_optimized import (
     compute_pcf_periodic_fast,
     compute_all_pcfs_fast,
     measure_cluster_sizes_fast,
@@ -76,6 +76,8 @@ except ImportError:
 # CONFIGURATION
 # =============================================================================
 
+# TODO: update to hold sweep information to be used with a generic sweep runner
+# should have different object for each experiment
 @dataclass
 class Config:
     """Central configuration for analysis."""
@@ -435,33 +437,24 @@ def run_single_simulation(
         "prey_std": float(np.std(prey_pops)),
         "pred_mean": float(np.mean(pred_pops)),
         "pred_std": float(np.std(pred_pops)),
-        "prey_survived": bool(np.mean(prey_pops) > 10),
-        "pred_survived": bool(np.mean(pred_pops) > 10),
-        "prey_n_clusters": len(prey_clusters),
-        "pred_n_clusters": len(pred_clusters),
-        
-        # Order parameter (largest cluster fraction)
-        "prey_largest_fraction_mean": float(np.mean(prey_largest_fractions)) if prey_largest_fractions else np.nan,
-        "prey_largest_fraction_std": float(np.std(prey_largest_fractions)) if prey_largest_fractions else np.nan,
-        "pred_largest_fraction_mean": float(np.mean(pred_largest_fractions)) if pred_largest_fractions else np.nan,
-        
-        # Percolation probability
-        "prey_percolation_prob": float(np.mean(prey_percolates)) if prey_percolates else np.nan,
-        "pred_percolation_prob": float(np.mean(pred_percolates)) if pred_percolates else np.nan,
+        "prey_survived": float(np.count_nonzero(prey_pops) / len(prey_pops)),
+        "pred_survived": float(np.count_nonzero(pred_pops) / len(pred_pops)),
     }
     
     # Evolved parameter statistics
     if with_evolution and evolved_vals:
-        valid_evolved = [v for v in evolved_vals if not np.isnan(v)]
+        valid_evolved = [v for v in evolved_vals if not np.isnan(v)] # NOTE: what is this?
         result["evolved_prey_death_mean"] = float(np.mean(valid_evolved)) if valid_evolved else np.nan
         result["evolved_prey_death_std"] = float(np.std(valid_evolved)) if valid_evolved else np.nan
         result["evolve_sd"] = evolve_sd
+
+        # TODO: add min and max for prey death rates to check for convergence
         
         # Final state
-        if valid_evolved:
+        if valid_evolved: # TODO: valid_evolved should be unnecessary if we check for extinction
             result["evolved_prey_death_final"] = valid_evolved[-1]
     
-    # Cluster fits
+    # Cluster fits TODO: need to be seperate function (only valid for critical point)
     if len(prey_clusters) > 50:
         fit = fit_truncated_power_law(np.array(prey_clusters))
         result["prey_tau"] = fit["tau"]
@@ -478,7 +471,7 @@ def run_single_simulation(
         result["pred_tau"] = np.nan
         result["pred_s_c"] = np.nan
     
-    # PCF statistics
+    # PCF statistics NOTE: to align with paper
     if len(pcf_samples['prey_prey']) > 0:
         dist, pcf_rr_mean, pcf_rr_se = average_pcfs(pcf_samples['prey_prey'])
         dist, pcf_cc_mean, pcf_cc_se = average_pcfs(pcf_samples['pred_pred'])
@@ -502,121 +495,10 @@ def run_single_simulation(
     
     return result
 
-
-def run_single_simulation_fss(
-    prey_birth: float,
-    prey_death: float,
-    grid_size: int,
-    seed: int,
-    cfg: Config,
-    warmup_steps: int,
-    measurement_steps: int,
-) -> Dict:
-    """FSS-specific simulation with size-scaled equilibration time."""
-    from models.CA import PP
-    
-    np.random.seed(seed)
-    if NUMBA_AVAILABLE:
-        set_numba_seed(seed)
-    
-    params = {
-        "prey_birth": prey_birth,
-        "prey_death": prey_death,
-        "predator_death": cfg.predator_death,
-        "predator_birth": cfg.predator_birth,
-    }
-    
-    model = PP(
-        rows=grid_size,
-        cols=grid_size,
-        densities=cfg.densities,
-        neighborhood="moore",
-        params=params,
-        seed=seed,
-        synchronous=cfg.synchronous,
-    )
-    
-    # No evolution for FSS - studying baseline spatial structure
-    model.run(warmup_steps)
-    
-    # Measurement
-    prey_pops, pred_pops = [], []
-    prey_clusters, pred_clusters = [], []
-    prey_largest_fractions = []
-    prey_percolates = []
-    
-    cluster_interval = max(1, int(cfg.cluster_interval * grid_size / cfg.default_grid))
-    sample_counter = 0
-    
-    min_count = int(cfg.min_analysis_density * (grid_size**2)) # Scaled threshold
-    
-    for step in range(measurement_steps):
-        model.update()
-        _, prey, pred = count_populations(model.grid)
-        prey_pops.append(prey)
-        pred_pops.append(pred)
-        
-        if step % cluster_interval == 0 and sample_counter < cfg.cluster_samples:
-            if prey >= min_count:
-                # Full cluster stats for FSS
-                prey_stats = get_cluster_stats_fast(model.grid, 1)
-                prey_clusters.extend(prey_stats['sizes'])
-                prey_largest_fractions.append(prey_stats['largest_fraction'])
-                
-                # Percolation check
-                prey_perc, _, _, _ = get_percolating_cluster_fast(model.grid, 1)
-                prey_percolates.append(prey_perc)
-                
-                pred_clusters.extend(measure_cluster_sizes_fast(model.grid, 2))
-            
-            sample_counter += 1
-    
-    result = {
-        "prey_birth": prey_birth,
-        "prey_death": prey_death,
-        "grid_size": grid_size,
-        "seed": seed,
-        "warmup_steps": warmup_steps,
-        "measurement_steps": measurement_steps,
-        "prey_mean": float(np.mean(prey_pops)),
-        "prey_std": float(np.std(prey_pops)),
-        "pred_mean": float(np.mean(pred_pops)),
-        "pred_std": float(np.std(pred_pops)),
-        "prey_survived": bool(np.mean(prey_pops) > 10),
-        "pred_survived": bool(np.mean(pred_pops) > 10),
-        # FSS-specific metrics
-        "prey_largest_fraction": float(np.mean(prey_largest_fractions)) if prey_largest_fractions else np.nan,
-        "prey_percolation_prob": float(np.mean(prey_percolates)) if prey_percolates else np.nan,
-    }
-    
-    # Cluster fits
-    if len(prey_clusters) > 50:
-        fit = fit_truncated_power_law(np.array(prey_clusters))
-        result["prey_tau"] = fit["tau"]
-        result["prey_tau_se"] = fit.get("tau_se", np.nan)
-        result["prey_s_c"] = fit["s_c"]
-    else:
-        result["prey_tau"] = np.nan
-        result["prey_tau_se"] = np.nan
-        result["prey_s_c"] = np.nan
-    
-    if len(pred_clusters) > 50:
-        fit = fit_truncated_power_law(np.array(pred_clusters))
-        result["pred_tau"] = fit["tau"]
-        result["pred_tau_se"] = fit.get("tau_se", np.nan)
-        result["pred_s_c"] = fit["s_c"]
-    else:
-        result["pred_tau"] = np.nan
-        result["pred_tau_se"] = np.nan
-        result["pred_s_c"] = np.nan
-    
-    return result
-
-
 # =============================================================================
 # ANALYSIS RUNNERS
 # =============================================================================
-
+# TODO: replace with sweep function based on config
 def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """Run full 2D parameter sweep with incremental JSONL saving."""
     from joblib import Parallel, delayed
@@ -678,7 +560,8 @@ def run_2d_sweep(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[
     logger.info(f"Sweep complete. Binary data saved to {output_npz}")
     return all_results
 
-
+# NOTE: would be good to scrutenize mutations like this, but maybe not realistic
+# TODO: should also be replaced with function based on config
 def run_sensitivity(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """Run evolution parameter sensitivity analysis."""
     from joblib import Parallel, delayed
@@ -708,7 +591,7 @@ def run_sensitivity(cfg: Config, output_dir: Path, logger: logging.Logger) -> Li
     logger.info(f"Saved to {output_file}")
     return results
 
-
+# TODO: should also be replaced with function based on config
 def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """Run finite-size scaling analysis."""
     from joblib import Parallel, delayed
@@ -762,56 +645,6 @@ def run_fss(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]
     
     logger.info(f"Saved to {output_file}")
     return results
-
-
-def run_debug_mode(cfg: Config, logger: logging.Logger):
-    """Run interactive visualization for debugging."""
-    logger.info("=" * 60)
-    logger.info("DEBUG MODE - Interactive Visualization")
-    logger.info("=" * 60)
-    
-    try:
-        from models.CA import PP
-    except ImportError:
-        logger.error("Cannot import PP model.")
-        return
-    
-    grid_size = 50
-    params = {
-        "prey_birth": 0.20,
-        "prey_death": 0.05,
-        "predator_death": cfg.predator_death,
-        "predator_birth": cfg.predator_birth,
-    }
-    
-    logger.info(f"Parameters: {params}")
-    logger.info(f"Grid: {grid_size}×{grid_size}")
-    
-    model = PP(
-        rows=grid_size,
-        cols=grid_size,
-        densities=cfg.densities,
-        neighborhood="moore",
-        params=params,
-        seed=42,
-        synchronous=cfg.synchronous,
-    )
-    
-    model.evolve("prey_death", sd=cfg.evolve_sd, min_val=cfg.evolve_min, max_val=cfg.evolve_max)
-    
-    logger.info("Starting visualization...")
-    model.visualize(
-        interval=5,
-        figsize=(16, 10),
-        pause=0.01,
-        show_cell_params=True,
-        show_neighbors=True,
-        downsample=1,
-    )
-    
-    model.run(500)
-    logger.info("Simulation complete.")
-    input("Press Enter to exit...")
 
 # =============================================================================
 # MAIN

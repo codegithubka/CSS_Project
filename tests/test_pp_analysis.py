@@ -22,7 +22,7 @@ for p in [project_root, scripts_dir]:
 
 # Import module under test
 try:
-    from scripts.pp_analysis import (
+    from scripts.experiments import (
         Config,
         count_populations,
         get_evolved_stats,
@@ -35,7 +35,7 @@ try:
         run_single_simulation_fss,
     )
 except ImportError:
-    from scripts.pp_analysis import (
+    from scripts.experiments import (
         Config,
         count_populations,
         get_evolved_stats,
