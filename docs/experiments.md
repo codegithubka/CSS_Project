@@ -16,18 +16,22 @@ These phases should be completed sequentially, deepening our understanding at ea
 	- Look for critical transition
 - Create log-log plot of cluster size distribution, varying prey death rate
 	- Look for power-law
-### Phase 2: finite-size scaling
+### Phase 2: self-organization
+- Measure final prey death rate after evolution
+	- Look for self-organized criticality: an SOC-system should move towards the critical point
+### Phase 3: finite-size scaling
 - Sweep of grid sizes at critical point
 	- Check for power-law cut-offs
-### Phase 3: sensitivity analysis
-- Show correlation between critical prey death rate and post-evolution prey death rate, varying other parameters
-	- Look for self-organized criticality: an SOC-system should move towards the critical point regardless of other parameters
+### Phase 4: sensitivity analysis
 - Show sensitivity of hydra effect varying other parameters
-### Phase 4: perturbation analysis
+	- Investigate the ubiquity of the critical point across parameter regimes
+- Show correlation between critical prey death rate and post-evolution prey death rate, varying other parameters
+	- Again look for self-organized criticality: an SOC-system should move towards the critical point regardless of other parameters
+### Phase 5: perturbation analysis
 - Create autocorrelation plot of mean population count, following perturbations around the critical point
 	- Look for critical slowing down: perturbations to states closer to the critical point should more slowly return to the steady state
 	- This requires time series data
-### Phase 5: model extensions
+### Phase 6: model extensions
 - Investigate whether hydra effect and SOC still occur with diffusion and directed movement
 
 # Todo
