@@ -431,66 +431,6 @@ def _detect_clusters_numba(
     
     return labels, sizes[:n_clusters]
 
-
-@njit(cache=True)
-def _check_percolation(
-    labels: np.ndarray,
-    sizes: np.ndarray,
-    direction: int,
-) -> Tuple[bool, int, int]:
-    """
-    Check for percolating clusters.
-    
-    Args:
-        direction: 0=horizontal, 1=vertical, 2=both
-    
-    Returns:
-        percolates, perc_label, perc_size
-    """
-    rows, cols = labels.shape
-    max_label = len(sizes)
-    
-    touches_left = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_right = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_top = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_bottom = np.zeros(max_label + 1, dtype=np.bool_)
-    
-    for i in range(rows):
-        if labels[i, 0] > 0:
-            touches_left[labels[i, 0]] = True
-        if labels[i, cols - 1] > 0:
-            touches_right[labels[i, cols - 1]] = True
-    
-    for j in range(cols):
-        if labels[0, j] > 0:
-            touches_top[labels[0, j]] = True
-        if labels[rows - 1, j] > 0:
-            touches_bottom[labels[rows - 1, j]] = True
-    
-    best_label = 0
-    best_size = 0
-    
-    for label in range(1, max_label + 1):
-        percolates_h = touches_left[label] and touches_right[label]
-        percolates_v = touches_top[label] and touches_bottom[label]
-        
-        is_percolating = False
-        if direction == 0:
-            is_percolating = percolates_h
-        elif direction == 1:
-            is_percolating = percolates_v
-        else:
-            is_percolating = percolates_h or percolates_v
-        
-        if is_percolating:
-            cluster_size = sizes[label - 1]
-            if cluster_size > best_size:
-                best_size = cluster_size
-                best_label = label
-    
-    return best_label > 0, best_label, best_size
-
-
 # ============================================================================
 # PUBLIC API - CLUSTER DETECTION
 # ============================================================================
