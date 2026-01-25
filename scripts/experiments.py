@@ -345,26 +345,22 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    prey_births = cfg.get_prey_births()
     prey_deaths = cfg.get_prey_deaths()
     
     # Build job list
     jobs = []
-    # Sweep through prey_birth and prey_death
-    for pb in prey_births:
-        for pd in prey_deaths:
-            for rep in range(cfg.n_replicates):
-                params = {"pb": pb, "pd": pd}
-                
-                # Non-evolution run #FIXME: Check if both evo and non-evo are needed for phase 1
-                seed = generate_unique_seed(params, rep)
-                jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death, 
-                            cfg.grid_size, seed, cfg, False))
+    # Sweep through prey_death only (prey_birth is fixed)
+    for pd in prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pd": pd}
+            
+            seed = generate_unique_seed(params, rep)
+            jobs.append((cfg.prey_birth, pd, cfg.predator_birth, cfg.predator_death, 
+                        cfg.grid_size, seed, cfg, False))
                 
     
     logger.info(f"Phase 1: {len(jobs):,} simulations")
-    logger.info(f"  Grid: {cfg.n_prey_birth} × {cfg.n_prey_death} × {cfg.n_replicates} reps × 2 (evo/no-evo)")
-    
+    logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
     # Run with incremental saving
     output_jsonl = output_dir / "phase1_results.jsonl"
     all_results = []

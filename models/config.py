@@ -189,20 +189,20 @@ class Config:
 
 #FIXME: These configs are arbitraty and should be finalized before running experiments.
 
-# Phase 1: Parameter sweep to find critical point
 PHASE1_CONFIG = Config(
     grid_size=100,
-    n_prey_birth=15,
     n_prey_death=20,
-    prey_birth_range=(0.10, 0.35),
+    prey_birth=0.2,
     prey_death_range=(0.0, 0.20),
+    predator_birth=0.8,    #
+    predator_death=0.05,    
     n_replicates=30,
     warmup_steps=300,
     measurement_steps=500,
     collect_pcf=True,
     pcf_sample_rate=0.2,
     save_timeseries=False,
-    directed_hunting = False,
+    directed_hunting=False,
 )
 
 # Phase 2: Self-organization (evolution toward criticality)
