@@ -208,7 +208,7 @@ PHASE4_CONFIG = Config(
 # Phase 5: Perturbation analysis (critical slowing down)
 PHASE5_CONFIG = Config(
     grid_size=100,
-    prey_death_offsets=(-0.02, -0.01, 0.0, 0.01, 0.02),
+    prey_death_offsets=(-0.02, -0.01, 0.0, 0.01, 0.02), #FIXME: Is this what we vary?
     n_replicates=20,
     warmup_steps=500,
     measurement_steps=2000,

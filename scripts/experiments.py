@@ -18,9 +18,13 @@ Usage:
 """
 
 
-# NOTE: The soc_analysis script used temporal avalache data to assess SOC.
+# NOTE (1): The soc_analysis script used temporal avalache data to assess SOC.
 # This functionality is not yet implemented here. We can still derive that data
 # from the full time series using np.diff(prey_timeseries)
+
+
+# NOTE (2): Post-processing utilities and plotting are in scripts/analysis.py. This script should
+# solely focus on running the experiments and saving raw results.
 
 
 import argparse
@@ -166,7 +170,7 @@ def run_single_simulation(
         rows=grid_size,
         cols=grid_size,
         densities=cfg.densities,
-        neighborhood="moore",
+        neighborhood="moore", #NOTE: Default neighborhood
         params={
             "prey_birth": prey_birth,
             "prey_death": prey_death,
@@ -185,15 +189,16 @@ def run_single_simulation(
     warmup_steps = cfg.get_warmup_steps(grid_size)
     measurement_steps = cfg.get_measurement_steps(grid_size)
     
+    
+    # Warmup phase
     for _ in range(warmup_steps):
         model.update()
         
-    # Measurement phase
-    prey_pops, pred_pops = [], []
-    evolved_means, evolved_stds = [], []
-    cluster_sizes_prey, cluster_sizes_pred = [], []
-    largest_fractions_prey, largest_fractions_pred = [], []
-    percolates_prey, percolates_pred = [], []
+    # Measurement phase: start collecting our mertics
+    prey_pops, pred_pops = [], [] # Prey populations and predator populations
+    evolved_means, evolved_stds = [], [] # Evolution stats over time
+    cluster_sizes_prey, cluster_sizes_pred = [], [] # Cluster sizes
+    largest_fractions_prey, largest_fractions_pred = [], [] # Largest cluster fractions = size of largest cluster / total population
     pcf_samples = {'prey_prey': [], 'pred_pred': [], 'prey_pred': []}
     
     
@@ -223,11 +228,7 @@ def run_single_simulation(
             
             largest_fractions_prey.append(prey_stats['largest_fraction'])
             largest_fractions_pred.append(pred_stats['largest_fraction'])
-            
-            prey_perc, _, _, _ = get_percolating_cluster_fast(model.grid, 1)
-            pred_perc, _, _, _ = get_percolating_cluster_fast(model.grid, 2)
-            percolates_prey.append(prey_perc)
-            percolates_pred.append(pred_perc)
+            # NOTE: Change in largest fraction calculation if needed for critical point location
             
             # PCF
             if compute_pcf:
@@ -266,14 +267,12 @@ def run_single_simulation(
         # Order parameters
         "prey_largest_fraction": float(np.mean(largest_fractions_prey)) if largest_fractions_prey else np.nan,
         "pred_largest_fraction": float(np.mean(largest_fractions_pred)) if largest_fractions_pred else np.nan,
-        "prey_percolates": bool(any(percolates_prey)) if percolates_prey else False,
-        "pred_percolates": bool(any(percolates_pred)) if percolates_pred else False,
     }
     
     # Time series (if requested)
     if cfg.save_timeseries:
         subsample = cfg.timeseries_subsample
-        result["prey_timeseries"] = prey_pops[::subsample]
+        result["prey_timeseries"] = prey_pops[::subsample] #NOTE: Sample temporal data every 'subsample' steps
         result["pred_timeseries"] = pred_pops[::subsample]
         
         
@@ -300,6 +299,28 @@ def run_single_simulation(
         result["pcf_prey_pred"] = pcf_cr.tolist()
         
         # Short-range indices
+        """
+        NOTE: The Pair Correlation function measures spatial correlation at distance r.
+            g(r) = 1: random (poisson distribution)
+            g(r) > 1: clustering (more pairs than random)
+            g(r) < 1: segregation (fewer pairs than random)
+        
+            prey_clustering_index: Do prey clump together?
+            pred_clustering_index: Do predators clump together?
+            segregation_index: Are prey and predators segregated?
+        
+        For the Hydra effect model:
+            segregation_index < 1: Prey and predators are spatially separated
+            prey_clustering_index > 1: Prey form clusters
+            pred_clustering_index > 1: Predators form clusters
+            
+        High segregation (low segregation index): prey can reproduce in predator-free zones
+        High prey clustering: prey form groups that can survive predation
+        At criticality: expect sepcific balance where clusters are large enough to sustain but
+            fragmented enough to avoid total predation.
+            
+        If segregation_index = 1 approx, no Hydra effect -> follow mean field dynamics.
+        """
         short_mask = dist < 3.0
         if np.any(short_mask):
             result["segregation_index"] = float(np.mean(pcf_cr[short_mask]))
@@ -307,8 +328,6 @@ def run_single_simulation(
             result["pred_clustering_index"] = float(np.mean(pcf_cc[short_mask]))
     
     return result
-    
-    
     
 # =============================================================================
 # Experiment Phases
@@ -331,12 +350,13 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     # Build job list
     jobs = []
+    # Sweep through prey_birth and prey_death
     for pb in prey_births:
         for pd in prey_deaths:
             for rep in range(cfg.n_replicates):
                 params = {"pb": pb, "pd": pd}
                 
-                # Non-evolution run
+                # Non-evolution run #FIXME: Check if both evo and non-evo are needed for phase 1
                 seed = generate_unique_seed(params, rep)
                 jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death, 
                             cfg.grid_size, seed, cfg, False))
@@ -383,7 +403,7 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     SOC Hypothesis: Prey evolve toward critical critical point regardless of initial conditions.
     
-    Test: Start evo from different intial prey_death values (?)
+    NOTE: Test is currently start evo from different intial prey_death values (?)
     If SOC holds, then all runs converge to the same final prey_death near critical point.
     """
     from joblib import Parallel, delayed
@@ -445,13 +465,14 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     from joblib import Parallel, delayed
     
-    pb = cfg.critical_prey_birth
+    # NOTE: Tuned to critical points from phase 1
+    pb = cfg.critical_prey_birth 
     pd = cfg.critical_prey_death
     
     logger.info(f"Phase 3: FSS at critical point (pb={pb}, pd={pd})")
     
     jobs = []
-    for L in cfg.grid_sizes:
+    for L in cfg.grid_sizes: # Sweep through grid sizes
         warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
         
         for rep in range(cfg.n_replicates):
@@ -475,6 +496,7 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
             f.flush()
             all_results.append(result)
     
+    # Post-run metadata: postprocessing will fit cluster cutoffs vs L
     meta = {
         "phase": 3,
         "description": "Finite-size scaling",
@@ -496,6 +518,10 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     - Vary predator_birth and predator_death
     - For each combo, sweep prey_death
+    
+    
+    NOTE: This phase should be subjected to changes depeding on what we are interested in varying
+    in terms of parameters.
     """
     from joblib import Parallel, delayed
     
