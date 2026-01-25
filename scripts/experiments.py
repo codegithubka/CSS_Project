@@ -361,10 +361,6 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
                 jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death, 
                             cfg.grid_size, seed, cfg, False))
                 
-                # Evolution run
-                evo_seed = generate_unique_seed(params, rep + 1_000_000)
-                jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death,
-                            cfg.grid_size, evo_seed, cfg, True))
     
     logger.info(f"Phase 1: {len(jobs):,} simulations")
     logger.info(f"  Grid: {cfg.n_prey_birth} × {cfg.n_prey_death} × {cfg.n_replicates} reps × 2 (evo/no-evo)")

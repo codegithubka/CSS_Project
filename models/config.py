@@ -73,7 +73,7 @@ class Config:
     grid_sizes: Tuple[int, ...] = (100, 200, 500, 1000)
     
     # Default/fixed parameters
-    prey_birth: float = 0.20
+    prey_birth: float = 0.80
     prey_death: float = 0.05
     predator_birth: float = 0.2  # FIXME: Default predator death rate
     predator_death: float = 0.1 # FIXME: Default predator death rate
@@ -84,9 +84,9 @@ class Config:
     
     # Prey parameter sweep (Phase 1)
     prey_birth_range: Tuple[float, float] = (0.10, 0.35)
-    prey_death_range: Tuple[float, float] = (0.001, 0.10)
+    prey_death_range: Tuple[float, float] = (0.0, 0.20)
     n_prey_birth: int = 15   # FIXME: Decide number of grid points along prey axes
-    n_prey_death: int = 15
+    n_prey_death: int = 20
     
     # Predator parameter sweep (Phase 4 sensitivity)
     predator_birth_values: Tuple[float, ...] = (0.15, 0.20, 0.25, 0.30) #FIXME: Bogus values for now
@@ -100,7 +100,7 @@ class Config:
     
     # Simulation steps
     warmup_steps: int = 300  # FIXME: Steps to run before measuring
-    measurement_steps: int = 300 # FIXME: Decide measurement steps
+    measurement_steps: int = 500 # FIXME: Decide measurement steps
     
     # Evo
     with_evolution: bool = False
@@ -191,17 +191,18 @@ class Config:
 
 # Phase 1: Parameter sweep to find critical point
 PHASE1_CONFIG = Config(
-    grid_size=1000,
+    grid_size=100,
     n_prey_birth=15,
     n_prey_death=15,
     prey_birth_range=(0.10, 0.35),
-    prey_death_range=(0.001, 0.10),
-    n_replicates=20,
+    prey_death_range=(0.0, 0.20),
+    n_replicates=30,
     warmup_steps=300,
-    measurement_steps=1000,
+    measurement_steps=500,
     collect_pcf=True,
     pcf_sample_rate=0.2,
     save_timeseries=False,
+    directed_hunting = False,
 )
 
 # Phase 2: Self-organization (evolution toward criticality)
