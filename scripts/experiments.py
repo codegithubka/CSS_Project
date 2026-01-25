@@ -396,6 +396,8 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     NOTE: Test is currently start evo from different intial prey_death values (?)
     If SOC holds, then all runs converge to the same final prey_death near critical point.
+    
+    FIXME: This run script needs to be adjusted
     """
     from joblib import Parallel, delayed
     

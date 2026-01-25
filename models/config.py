@@ -190,7 +190,7 @@ class Config:
 #FIXME: These configs are arbitraty and should be finalized before running experiments.
 
 PHASE1_CONFIG = Config(
-    grid_size=100,
+    grid_size=1000,
     n_prey_death=20,
     prey_birth=0.2,
     prey_death_range=(0.0, 0.20),
@@ -209,9 +209,9 @@ PHASE1_CONFIG = Config(
 PHASE2_CONFIG = Config(
     grid_size=100,
     n_prey_birth=10,
-    n_replicates=10,
-    warmup_steps=100,
-    measurement_steps=1000,
+    n_replicates=30,
+    warmup_steps=300,
+    measurement_steps=500,
     with_evolution=True,
     evolve_sd=0.10,
     collect_pcf=False,  # Not needed for SOC analysis
