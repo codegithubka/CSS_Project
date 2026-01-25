@@ -66,11 +66,11 @@ class Config:
     """Central configuration for all experiments."""
     
     # Grid settings
-    grid_size: int = 100  #FIXME: Decide default configuration
+    grid_size: int = 1000  #FIXME: Decide default configuration
     densities: Tuple[float, float] = (0.30, 0.15)  # (prey, predator)  #FIXME: Default densities
     
     # For FSS experiments: multiple grid sizes
-    grid_sizes: Tuple[int, ...] = (50, 75, 100, 150, 200)
+    grid_sizes: Tuple[int, ...] = (100, 200, 500, 1000)
     
     # Default/fixed parameters
     prey_birth: float = 0.20
@@ -99,7 +99,7 @@ class Config:
     n_replicates: int = 15 # FIXME: Decide number of indep. runs per parameter config
     
     # Simulation steps
-    warmup_steps: int = 200  # FIXME: Steps to run before measuring
+    warmup_steps: int = 300  # FIXME: Steps to run before measuring
     measurement_steps: int = 300 # FIXME: Decide measurement steps
     
     # Evo
@@ -148,11 +148,11 @@ class Config:
     
     def get_warmup_steps(self, L: int) -> int: #FIXME: This method will be updated depending on Sary's results.
         """Scale warmup with grid size."""
-        return int(self.warmup_steps * (L / 100))
+        return self.warmup_steps
     
     def get_measurement_steps(self, L: int) -> int:
         """Scale measurement with grid size."""
-        return int(self.measurement_steps * (L / 100))
+        return self.measurement_steps
     
     def estimate_runtime(self, n_cores: int = 32) -> str:
         """Estimate total runtime based on benchmark data."""
@@ -191,14 +191,14 @@ class Config:
 
 # Phase 1: Parameter sweep to find critical point
 PHASE1_CONFIG = Config(
-    grid_size=100,
+    grid_size=1000,
     n_prey_birth=15,
     n_prey_death=15,
     prey_birth_range=(0.10, 0.35),
     prey_death_range=(0.001, 0.10),
     n_replicates=15,
-    warmup_steps=200,
-    measurement_steps=300,
+    warmup_steps=300,
+    measurement_steps=1000,
     collect_pcf=True,
     pcf_sample_rate=0.2,
     save_timeseries=False,
@@ -237,7 +237,7 @@ PHASE4_CONFIG = Config(
     prey_death_range=(0.01, 0.10),
     n_replicates=20,
     warmup_steps=200,
-    measurement_steps=300,
+    measurement_steps=1000,
     with_evolution=True,
     collect_pcf=False,
     save_timeseries=True,
@@ -258,9 +258,7 @@ PHASE5_CONFIG = Config(
 )
 
 # Phase 6: Model extensions
-PHASE6_CONFIG = Config(
-    ... #FIXME: Will be defined later
-)
+PHASE6_CONFIG = Config() #FIXME: Will be defined later
 
 PHASE_CONFIGS = {
     1: PHASE1_CONFIG,

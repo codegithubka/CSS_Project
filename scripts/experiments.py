@@ -45,11 +45,11 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 # Project imports
-project_root = str(Path(__file__).parent)
+project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from config import Config, get_phase_config, PHASE_CONFIGS
+from models.config import Config, get_phase_config, PHASE_CONFIGS
 
 # Numba imports
 try:
