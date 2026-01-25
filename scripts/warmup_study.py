@@ -70,14 +70,14 @@ class WarmupStudyConfig:
     sample_interval: int = 10
     
     # Equilibration detection parameters
-    equilibration_window: int = 10  # Rolling window size
+    equilibration_window: int = 50  # FFT window size (needs to capture oscillation periods)
     
     # Simulation parameters (near critical point)
-    prey_birth: float = 0.22
-    prey_death: float = 0.04
+    prey_birth: float = 0.25
+    prey_death: float = 0.05
     predator_birth: float = 0.2
     predator_death: float = 0.1
-    densities: Tuple[float, float] = (0.30, 0.15)
+    densities: Tuple[float, float] = (0.2, 0.1)
     
     # Update mode
     synchronous: bool = False
@@ -88,22 +88,20 @@ class WarmupStudyConfig:
 # EQUILIBRATION DETECTION
 # =============================================================================
 
-def estimate_equilibration_trend(
+def estimate_equilibration_frequency(
     time_series: np.ndarray,
     sample_interval: int,
     grid_size: int = 100,
-    base_window: int = 10,
-    n_check: int = 8,
-    min_alternation_rate: float = 0.35,
+    base_window: int = 50,
+    n_stable_windows: int = 3,
+    frequency_tolerance: float = 0.2,
 ) -> int:
     """
-    Estimate equilibration by detecting when directional trend disappears.
+    Detect equilibration when a characteristic oscillation frequency dominates.
     
-    This method is grid-size independent because it checks the DIRECTION
-    of changes (positive/negative), not their MAGNITUDE.
-    
-    - During warmup: Changes are consistently in one direction (trending)
-    - At equilibrium: Changes alternate randomly (no trend)
+    Uses spectral analysis (FFT) on sliding windows to find the dominant
+    frequency. Equilibrium is detected when the dominant frequency stabilizes
+    (stops changing significantly between consecutive windows).
     
     Parameters
     ----------
@@ -112,81 +110,129 @@ def estimate_equilibration_trend(
     sample_interval : int
         Number of simulation steps between samples.
     grid_size : int
-        Size of the grid (L). Used to scale the window size, since larger
-        grids have longer correlation times for fluctuations.
+        Size of the grid (L). Window size scales with grid size.
     base_window : int
-        Base window size for L=100. Actual window scales as base_window * (L/100).
-    n_check : int
-        Number of consecutive changes to check for alternation pattern.
-    min_alternation_rate : float
-        Minimum fraction of sign changes required to declare equilibrium.
-        At equilibrium (random walk), expect ~50% alternations.
-        Default 0.35 allows some tolerance for correlated fluctuations.
+        Base FFT window size (number of samples) for L=100.
+        Needs to be large enough to capture oscillation periods.
+    n_stable_windows : int
+        Number of consecutive windows with stable dominant frequency
+        required to declare equilibrium.
+    frequency_tolerance : float
+        Maximum allowed relative change in dominant frequency between
+        consecutive windows to be considered "stable".
     
     Returns
     -------
     int
         Estimated equilibration step.
     """
-    # Scale window with grid size (larger grids have longer correlation times)
+    # Scale window with grid size
     window = max(base_window, int(base_window * (grid_size / 100)))
     
-    if len(time_series) < window + n_check + 10:
+    # Need at least 3 windows worth of data
+    if len(time_series) < window * 4:
         return len(time_series) * sample_interval
     
-    # Compute rolling means to smooth out high-frequency noise
-    n_means = len(time_series) - window + 1
-    rolling_means = np.array([
-        np.mean(time_series[i:i + window]) 
-        for i in range(n_means)
-    ])
+    # Compute dominant frequency for each sliding window
+    step_size = window // 4  # Overlap windows by 75%
+    dominant_freqs = []
+    window_centers = []
     
-    # Compute step-to-step changes in rolling mean
-    changes = np.diff(rolling_means)
+    for start in range(0, len(time_series) - window, step_size):
+        segment = time_series[start:start + window]
+        
+        # Remove mean (DC component)
+        segment = segment - np.mean(segment)
+        
+        # Compute FFT
+        fft_result = np.fft.rfft(segment)
+        power = np.abs(fft_result) ** 2
+        freqs = np.fft.rfftfreq(window, d=sample_interval)
+        
+        # Skip DC (index 0) and find dominant frequency
+        if len(power) > 1:
+            # Find peak in power spectrum (excluding DC)
+            peak_idx = np.argmax(power[1:]) + 1
+            dominant_freq = freqs[peak_idx]
+            dominant_freqs.append(dominant_freq)
+            window_centers.append(start + window // 2)
     
-    # Skip initial transient (first 20% of data to ensure we're past initial chaos)
-    start_idx = max(n_check, len(changes) // 5)
+    if len(dominant_freqs) < n_stable_windows + 2:
+        return len(time_series) * sample_interval
     
-    # Slide through and check for loss of directional consistency
-    for i in range(start_idx, len(changes) - n_check):
-        recent_changes = changes[i:i + n_check]
+    dominant_freqs = np.array(dominant_freqs)
+    window_centers = np.array(window_centers)
+    
+    # Find where dominant frequency stabilizes
+    # Skip first few windows (definitely transient)
+    start_check = max(2, len(dominant_freqs) // 5)
+    
+    stable_count = 0
+    
+    for i in range(start_check, len(dominant_freqs) - 1):
+        freq_prev = dominant_freqs[i - 1]
+        freq_curr = dominant_freqs[i]
         
-        # Get signs of changes (+1, -1, or 0)
-        signs = np.sign(recent_changes)
+        # Check if frequency is stable (relative change small)
+        if freq_prev > 0:
+            rel_change = abs(freq_curr - freq_prev) / freq_prev
+        else:
+            rel_change = 1.0 if freq_curr != 0 else 0.0
         
-        # Count sign alternations (how often direction flips)
-        # A flip is when sign[i] != sign[i+1] (and neither is 0)
-        nonzero_mask = signs != 0
-        if np.sum(nonzero_mask) < n_check // 2:
-            # Too many zero changes (population might be dead/static)
-            continue
-        
-        nonzero_signs = signs[nonzero_mask]
-        if len(nonzero_signs) < 2:
-            continue
-            
-        sign_flips = np.sum(nonzero_signs[:-1] != nonzero_signs[1:])
-        alternation_rate = sign_flips / (len(nonzero_signs) - 1)
-        
-        # If changes alternate frequently, we're at equilibrium
-        # (no consistent directional trend)
-        if alternation_rate >= min_alternation_rate:
-            # Verify this persists for a bit longer
-            if i + n_check * 2 < len(changes):
-                future_changes = changes[i + n_check:i + n_check * 2]
-                future_signs = np.sign(future_changes)
-                future_nonzero = future_signs[future_signs != 0]
-                if len(future_nonzero) >= 2:
-                    future_flips = np.sum(future_nonzero[:-1] != future_nonzero[1:])
-                    future_rate = future_flips / (len(future_nonzero) - 1)
-                    if future_rate >= min_alternation_rate * 0.8:
-                        # Confirmed: direction is random, we're at equilibrium
-                        return (i + window) * sample_interval
-            else:
-                # Near end of data, accept current detection
-                return (i + window) * sample_interval
+        if rel_change < frequency_tolerance:
+            stable_count += 1
+            if stable_count >= n_stable_windows:
+                # Found stable frequency regime
+                eq_sample = window_centers[i - n_stable_windows + 1]
+                return eq_sample * sample_interval
+        else:
+            stable_count = 0
     
     return len(time_series) * sample_interval
+
+
+def get_dominant_frequency_series(
+    time_series: np.ndarray,
+    sample_interval: int,
+    window: int,
+) -> tuple:
+    """
+    Compute dominant frequency over sliding windows (for diagnostic plotting).
+    
+    Returns (window_centers, dominant_frequencies, power_concentration).
+    """
+    step_size = window // 4
+    dominant_freqs = []
+    power_concentrations = []
+    window_centers = []
+    
+    for start in range(0, len(time_series) - window, step_size):
+        segment = time_series[start:start + window]
+        segment = segment - np.mean(segment)
+        
+        fft_result = np.fft.rfft(segment)
+        power = np.abs(fft_result) ** 2
+        freqs = np.fft.rfftfreq(window, d=sample_interval)
+        
+        if len(power) > 1:
+            # Dominant frequency (excluding DC)
+            peak_idx = np.argmax(power[1:]) + 1
+            dominant_freq = freqs[peak_idx]
+            dominant_freqs.append(dominant_freq)
+            
+            # Power concentration: fraction of total power in dominant frequency
+            total_power = np.sum(power[1:])  # Exclude DC
+            if total_power > 0:
+                concentration = power[peak_idx] / total_power
+            else:
+                concentration = 0
+            power_concentrations.append(concentration)
+            
+            window_centers.append((start + window // 2) * sample_interval)
+    
+    return (np.array(window_centers), 
+            np.array(dominant_freqs), 
+            np.array(power_concentrations))
 
 
 # =============================================================================
@@ -219,9 +265,9 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
         logger.info(f"Testing grid size L = {L}")
         logger.info(f"{'='*50}")
         
-        # Show scaled window size
+        # Show scaled FFT window size
         scaled_window = max(cfg.equilibration_window, int(cfg.equilibration_window * (L / 100)))
-        logger.info(f"  Window size (scaled): {scaled_window} samples")
+        logger.info(f"  FFT window size (scaled): {scaled_window} samples")
         
         # Warmup Numba kernels for this size
         warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
@@ -268,7 +314,7 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
                     pred_count = np.sum(model.grid == 2)
                     prey_densities.append(prey_count / grid_cells)
                     pred_densities.append(pred_count / grid_cells)
-                model.run(1)
+                model.update()
             
             total_time = time.perf_counter() - t0
             time_per_step = total_time / cfg.max_steps
@@ -277,7 +323,7 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
             pred_densities = np.array(pred_densities)
             
             # Estimate equilibration (trend-based, robust to grid size)
-            eq_steps = estimate_equilibration_trend(
+            eq_steps = estimate_equilibration_frequency(
                 prey_densities,
                 cfg.sample_interval,
                 grid_size=L,
@@ -460,6 +506,140 @@ def plot_scaling_summary(
 
 
 # =============================================================================
+# DIAGNOSTIC VISUALIZATION
+# =============================================================================
+
+def run_diagnostic(
+    grid_sizes: List[int],
+    cfg: WarmupStudyConfig,
+    output_dir: Path,
+    logger: logging.Logger,
+    dpi: int = 150,
+):
+    """
+    Run diagnostic simulations to visualize population dynamics and equilibration detection.
+    
+    Creates detailed plots showing:
+    - Population time series for each grid size
+    - Rolling means used for trend detection
+    - Direction of changes (+ or -)
+    - Detected equilibration point
+    """
+    from models.CA import PP
+    
+    try:
+        from models.numba_optimized import warmup_numba_kernels, set_numba_seed, NUMBA_AVAILABLE
+        USE_NUMBA = NUMBA_AVAILABLE
+    except ImportError:
+        USE_NUMBA = False
+        def warmup_numba_kernels(size, **kwargs): pass
+        def set_numba_seed(seed): pass
+    
+    n_sizes = len(grid_sizes)
+    fig, axes = plt.subplots(n_sizes, 3, figsize=(15, 4 * n_sizes))
+    if n_sizes == 1:
+        axes = axes.reshape(1, -1)
+    
+    for row, L in enumerate(grid_sizes):
+        logger.info(f"Diagnostic run for L={L}...")
+        
+        # Warmup Numba
+        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
+        
+        seed = 42 + L
+        np.random.seed(seed)
+        if USE_NUMBA:
+            set_numba_seed(seed)
+        
+        # Run simulation
+        model = PP(
+            rows=L, cols=L,
+            densities=cfg.densities,
+            neighborhood="moore",
+            params={
+                "prey_birth": cfg.prey_birth,
+                "prey_death": cfg.prey_death,
+                "predator_death": cfg.predator_death,
+                "predator_birth": cfg.predator_birth,
+            },
+            seed=seed,
+            synchronous=cfg.synchronous,
+            directed_hunting=cfg.directed_hunting,
+        )
+        
+        # Collect data
+        prey_densities = []
+        pred_densities = []
+        grid_cells = L * L
+        
+        for step in range(cfg.max_steps):
+            if step % cfg.sample_interval == 0:
+                prey_densities.append(np.sum(model.grid == 1) / grid_cells)
+                pred_densities.append(np.sum(model.grid == 2) / grid_cells)
+            model.update()
+        
+        prey_densities = np.array(prey_densities)
+        pred_densities = np.array(pred_densities)
+        steps = np.arange(len(prey_densities)) * cfg.sample_interval
+        
+        # Compute frequency analysis
+        base_window = cfg.equilibration_window
+        window = max(base_window, int(base_window * (L / 100)))
+        
+        # Get frequency series for plotting
+        freq_centers, dominant_freqs, power_conc = get_dominant_frequency_series(
+            prey_densities, cfg.sample_interval, window
+        )
+        
+        # Detect equilibration
+        eq_steps = estimate_equilibration_frequency(
+            prey_densities, cfg.sample_interval, grid_size=L, base_window=base_window
+        )
+        
+        # Panel 1: Population time series
+        ax = axes[row, 0]
+        ax.plot(steps, prey_densities, 'g-', alpha=0.7, linewidth=1, label='Prey')
+        ax.plot(steps, pred_densities, 'r-', alpha=0.7, linewidth=1, label='Predator')
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2, label=f'Equilibrium @ {eq_steps}')
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Density")
+        ax.set_title(f"L={L}: Population Dynamics (window={window})")
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 2: Dominant frequency over time
+        ax = axes[row, 1]
+        if len(dominant_freqs) > 0:
+            ax.plot(freq_centers, dominant_freqs * 1000, 'b-', linewidth=1.5, marker='o', markersize=3)
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2)
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Dominant frequency (mHz)")
+        ax.set_title(f"L={L}: Dominant Oscillation Frequency")
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 3: Power concentration (how dominant is the main frequency)
+        ax = axes[row, 2]
+        if len(power_conc) > 0:
+            ax.plot(freq_centers, power_conc, 'purple', linewidth=1.5, marker='o', markersize=3)
+            ax.fill_between(freq_centers, 0, power_conc, alpha=0.3, color='purple')
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2, label=f'Detected @ {eq_steps}')
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Power concentration")
+        ax.set_title(f"L={L}: Frequency Dominance")
+        ax.set_ylim(0, 1)
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_file = output_dir / "warmup_diagnostic.png"
+    plt.savefig(output_file, dpi=dpi)
+    plt.close()
+    
+    logger.info(f"Saved diagnostic plot to {output_file}")
+    return output_file
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -469,6 +649,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  %(prog)s --diagnostic                       # Visualize dynamics first!
   %(prog)s                                    # Default settings
   %(prog)s --sizes 50 100 150 200 300         # Custom grid sizes
   %(prog)s --replicates 20                    # More replicates for statistics
@@ -493,6 +674,8 @@ Examples:
                         help='Prey birth rate (default: 0.22)')
     parser.add_argument('--prey-death', type=float, default=0.04,
                         help='Prey death rate (default: 0.04)')
+    parser.add_argument('--diagnostic', action='store_true',
+                        help='Run diagnostic mode: visualize dynamics and equilibration detection')
     
     args = parser.parse_args()
     
@@ -536,6 +719,17 @@ Examples:
     with open(config_file, 'w') as f:
         json.dump(asdict(cfg), f, indent=2)
     logger.info(f"Saved config to {config_file}")
+    
+    # Diagnostic mode: visualize dynamics without full study
+    if args.diagnostic:
+        logger.info("\n" + "=" * 60)
+        logger.info("DIAGNOSTIC MODE")
+        logger.info("=" * 60)
+        logger.info("Running single simulations to visualize dynamics...")
+        run_diagnostic(list(cfg.grid_sizes), cfg, output_dir, logger, args.dpi)
+        logger.info("\nDiagnostic complete! Check warmup_diagnostic.png")
+        logger.info("Adjust parameters based on the plots, then run without --diagnostic")
+        return
     
     # Run study
     results = run_warmup_study(cfg, logger)
