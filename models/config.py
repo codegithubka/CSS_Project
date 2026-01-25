@@ -15,6 +15,45 @@ Usage:
     
     # Or modify existing
     cfg = Config(**{**asdict(PHASE1_CONFIG), 'n_replicates': 30})
+    
+    
+    
+NOTE: Saving snapshots of the grid can be implemented with the following logic:
+
+    final_grid: cluster analysis verfication for every n_stps.
+    
+    For Phase 3, save fro all grif sizes
+    
+    Add to config:
+        save_final_grid: bool = False
+        save_grid_timeseries: bool = False  # Very costly, use sparingly
+        grid_timeseries_subsample: int = N  # Save every N steps
+        snapshot_sample_rate: float = 0.0X  # Only X% of runs save snapshots
+        
+    For run_single_simulation():
+        # After cluster analysis
+        if cfg.save_final_grid:
+        # Only save for a sample of runs 
+        if np.random.random() < cfg.snapshot_sample_rate:
+            result["final_grid"] = model.grid.tolist()  # JSON-serializable
+
+        # For grid timeseries (use very sparingly):
+        if cfg.save_grid_timeseries:
+            grid_snapshots = []
+            
+        # Inside measurement loop:
+        if cfg.save_grid_timeseries and step % cfg.grid_timeseries_subsample == 0:
+            grid_snapshots.append(model.grid.copy())
+
+        # After loop:
+        if cfg.save_grid_timeseries and grid_snapshots:
+            # Save separately to avoid bloating JSONL
+            snapshot_path = output_dir / f"snapshots_{seed}.npz"
+            np.savez_compressed(snapshot_path, grids=np.array(grid_snapshots))
+            result["snapshot_file"] = str(snapshot_path)
+        
+        
+    OR create separate snapshot runs using some sort of SNAPSHOT_CONFIG.
 """
 
 from dataclasses import dataclass, field, asdict
