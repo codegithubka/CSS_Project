@@ -71,7 +71,6 @@ class WarmupStudyConfig:
     
     # Equilibration detection parameters
     equilibration_window: int = 10  # Rolling window size
-    equilibration_threshold: float = 0.02  # CV threshold for equilibrium
     
     # Simulation parameters (near critical point)
     prey_birth: float = 0.22
@@ -93,14 +92,17 @@ def estimate_equilibration_trend(
     time_series: np.ndarray,
     sample_interval: int,
     window: int = 10,
-    threshold: float = 0.02,
+    n_check: int = 8,
+    min_alternation_rate: float = 0.35,
 ) -> int:
     """
-    Estimate equilibration step by detecting when the mean stops trending.
+    Estimate equilibration by detecting when directional trend disappears.
     
-    This method checks if consecutive rolling means are stable (not changing
-    significantly). Unlike CV-based detection, this is robust to grid size
-    because it measures actual trend, not fluctuation magnitude.
+    This method is grid-size independent because it checks the DIRECTION
+    of changes (positive/negative), not their MAGNITUDE.
+    
+    - During warmup: Changes are consistently in one direction (trending)
+    - At equilibrium: Changes alternate randomly (no trend)
     
     Parameters
     ----------
@@ -109,47 +111,73 @@ def estimate_equilibration_trend(
     sample_interval : int
         Number of simulation steps between samples.
     window : int
-        Size of rolling window for computing means.
-    threshold : float
-        Maximum allowed relative change between consecutive window means.
-        Default 0.02 means the mean can change by at most 2% between windows.
+        Size of rolling window for smoothing (reduces noise in direction detection).
+    n_check : int
+        Number of consecutive changes to check for alternation pattern.
+    min_alternation_rate : float
+        Minimum fraction of sign changes required to declare equilibrium.
+        At equilibrium (random walk), expect ~50% alternations.
+        Default 0.35 allows some tolerance for correlated fluctuations.
     
     Returns
     -------
     int
         Estimated equilibration step.
     """
-    if len(time_series) < window * 3:
+    if len(time_series) < window + n_check + 10:
         return len(time_series) * sample_interval
     
-    # Skip initial transient (first 10% of data)
-    start_idx = max(window * 2, len(time_series) // 10)
+    # Compute rolling means to smooth out high-frequency noise
+    n_means = len(time_series) - window + 1
+    rolling_means = np.array([
+        np.mean(time_series[i:i + window]) 
+        for i in range(n_means)
+    ])
     
-    # Number of consecutive stable windows required
-    required_stable = 3
-    stable_count = 0
+    # Compute step-to-step changes in rolling mean
+    changes = np.diff(rolling_means)
     
-    for i in range(start_idx, len(time_series) - window):
-        # Compare means of two consecutive windows
-        window1 = time_series[i - window:i]
-        window2 = time_series[i:i + window]
+    # Skip initial transient (first 20% of data to ensure we're past initial chaos)
+    start_idx = max(n_check, len(changes) // 5)
+    
+    # Slide through and check for loss of directional consistency
+    for i in range(start_idx, len(changes) - n_check):
+        recent_changes = changes[i:i + n_check]
         
-        mean1 = np.mean(window1)
-        mean2 = np.mean(window2)
+        # Get signs of changes (+1, -1, or 0)
+        signs = np.sign(recent_changes)
         
-        if mean1 > 0 and mean2 > 0:
-            # Relative change in mean
-            relative_change = abs(mean2 - mean1) / mean1
+        # Count sign alternations (how often direction flips)
+        # A flip is when sign[i] != sign[i+1] (and neither is 0)
+        nonzero_mask = signs != 0
+        if np.sum(nonzero_mask) < n_check // 2:
+            # Too many zero changes (population might be dead/static)
+            continue
+        
+        nonzero_signs = signs[nonzero_mask]
+        if len(nonzero_signs) < 2:
+            continue
             
-            if relative_change < threshold:
-                stable_count += 1
-                if stable_count >= required_stable:
-                    # Return the step where stability began
-                    return (i - required_stable * window // 2) * sample_interval
+        sign_flips = np.sum(nonzero_signs[:-1] != nonzero_signs[1:])
+        alternation_rate = sign_flips / (len(nonzero_signs) - 1)
+        
+        # If changes alternate frequently, we're at equilibrium
+        # (no consistent directional trend)
+        if alternation_rate >= min_alternation_rate:
+            # Verify this persists for a bit longer
+            if i + n_check * 2 < len(changes):
+                future_changes = changes[i + n_check:i + n_check * 2]
+                future_signs = np.sign(future_changes)
+                future_nonzero = future_signs[future_signs != 0]
+                if len(future_nonzero) >= 2:
+                    future_flips = np.sum(future_nonzero[:-1] != future_nonzero[1:])
+                    future_rate = future_flips / (len(future_nonzero) - 1)
+                    if future_rate >= min_alternation_rate * 0.8:
+                        # Confirmed: direction is random, we're at equilibrium
+                        return (i + window) * sample_interval
             else:
-                stable_count = 0  # Reset if trend detected
-        else:
-            stable_count = 0  # Reset if population crashed
+                # Near end of data, accept current detection
+                return (i + window) * sample_interval
     
     return len(time_series) * sample_interval
 
@@ -242,7 +270,6 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
                 prey_densities,
                 cfg.sample_interval,
                 window=cfg.equilibration_window,
-                threshold=cfg.equilibration_threshold,
             )
             
             size_results['time_per_step'].append(time_per_step)
