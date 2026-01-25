@@ -66,7 +66,7 @@ class Config:
     """Central configuration for all experiments."""
     
     # Grid settings
-    grid_size: int = 1000  #FIXME: Decide default configuration
+    grid_size: int = 100  #FIXME: Decide default configuration
     densities: Tuple[float, float] = (0.30, 0.15)  # (prey, predator)  #FIXME: Default densities
     
     # For FSS experiments: multiple grid sizes
@@ -193,7 +193,7 @@ class Config:
 PHASE1_CONFIG = Config(
     grid_size=100,
     n_prey_birth=15,
-    n_prey_death=15,
+    n_prey_death=20,
     prey_birth_range=(0.10, 0.35),
     prey_death_range=(0.0, 0.20),
     n_replicates=30,
