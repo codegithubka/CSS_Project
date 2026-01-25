@@ -22,7 +22,6 @@ Usage:
 # This functionality is not yet implemented here. We can still derive that data
 # from the full time series using np.diff(prey_timeseries)
 
-
 # NOTE (2): Post-processing utilities and plotting are in scripts/analysis.py. This script should
 # solely focus on running the experiments and saving raw results.
 
