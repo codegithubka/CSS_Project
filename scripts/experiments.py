@@ -218,19 +218,22 @@ def run_single_simulation(
             evolved_stds.append(stats["std"])
         
         # Cluster analysis (at end of measurement)
-        if step == measurement_steps - 1 and prey >= min_count and pred >= (min_count // 4):
-            prey_stats = get_cluster_stats_fast(model.grid, 1)
-            pred_stats = get_cluster_stats_fast(model.grid, 2)
+        if step == measurement_steps - 1:
+            prey_survived = prey_pops[-1] > min_count
+            pred_survived = pred_pops[-1] > (min_count // 4)
             
-            cluster_sizes_prey = prey_stats['sizes'].tolist()
-            cluster_sizes_pred = pred_stats['sizes'].tolist()
+            if prey_survived:
+                prey_stats = get_cluster_stats_fast(model.grid, 1)
+                cluster_sizes_prey = prey_stats['sizes'].tolist()
+                largest_fractions_prey.append(prey_stats['largest_fraction'])
             
-            largest_fractions_prey.append(prey_stats['largest_fraction'])
-            largest_fractions_pred.append(pred_stats['largest_fraction'])
-            # NOTE: Change in largest fraction calculation if needed for critical point location
+            if pred_survived:
+                pred_stats = get_cluster_stats_fast(model.grid, 2)
+                cluster_sizes_pred = pred_stats['sizes'].tolist()
+                largest_fractions_pred.append(pred_stats['largest_fraction'])
             
-            # PCF
-            if compute_pcf:
+            # PCF requires both
+            if compute_pcf and prey_survived and pred_survived:
                 max_dist = min(grid_size / 2, cfg.pcf_max_distance)
                 pcf_data = compute_all_pcfs_fast(model.grid, max_dist, cfg.pcf_n_bins)
                 pcf_samples['prey_prey'].append(pcf_data['prey_prey'])
