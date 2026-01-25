@@ -91,7 +91,8 @@ class WarmupStudyConfig:
 def estimate_equilibration_trend(
     time_series: np.ndarray,
     sample_interval: int,
-    window: int = 10,
+    grid_size: int = 100,
+    base_window: int = 10,
     n_check: int = 8,
     min_alternation_rate: float = 0.35,
 ) -> int:
@@ -110,8 +111,11 @@ def estimate_equilibration_trend(
         Population density or count over time.
     sample_interval : int
         Number of simulation steps between samples.
-    window : int
-        Size of rolling window for smoothing (reduces noise in direction detection).
+    grid_size : int
+        Size of the grid (L). Used to scale the window size, since larger
+        grids have longer correlation times for fluctuations.
+    base_window : int
+        Base window size for L=100. Actual window scales as base_window * (L/100).
     n_check : int
         Number of consecutive changes to check for alternation pattern.
     min_alternation_rate : float
@@ -124,6 +128,9 @@ def estimate_equilibration_trend(
     int
         Estimated equilibration step.
     """
+    # Scale window with grid size (larger grids have longer correlation times)
+    window = max(base_window, int(base_window * (grid_size / 100)))
+    
     if len(time_series) < window + n_check + 10:
         return len(time_series) * sample_interval
     
@@ -212,6 +219,10 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
         logger.info(f"Testing grid size L = {L}")
         logger.info(f"{'='*50}")
         
+        # Show scaled window size
+        scaled_window = max(cfg.equilibration_window, int(cfg.equilibration_window * (L / 100)))
+        logger.info(f"  Window size (scaled): {scaled_window} samples")
+        
         # Warmup Numba kernels for this size
         warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
         
@@ -269,7 +280,8 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
             eq_steps = estimate_equilibration_trend(
                 prey_densities,
                 cfg.sample_interval,
-                window=cfg.equilibration_window,
+                grid_size=L,
+                base_window=cfg.equilibration_window,
             )
             
             size_results['time_per_step'].append(time_per_step)
