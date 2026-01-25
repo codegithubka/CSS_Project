@@ -337,7 +337,7 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Phase 1: Parameter sweep to find critical point.
     
-    - 2D sweep of prey_birth × prey_death
+    - 2D sweep of prey_birth prey_death
     - Both with and without evolution
     - Outputs: bifurcation data, cluster distributions
     """
