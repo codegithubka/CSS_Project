@@ -73,10 +73,10 @@ class Config:
     grid_sizes: Tuple[int, ...] = (100, 200, 500, 1000)
     
     # Default/fixed parameters
-    prey_birth: float = 0.80
+    prey_birth: float = 0.25
     prey_death: float = 0.05
-    predator_birth: float = 0.2  # FIXME: Default predator death rate
-    predator_death: float = 0.1 # FIXME: Default predator death rate
+    predator_birth: float = 0.8 # FIXME: Default predator death rate
+    predator_death: float = 0.05 # FIXME: Default predator death rate
     
     # Critical point (UPDATE AFTER PHASE 1)
     critical_prey_birth: float = 0.22 # FIXME: Change after obtaining results
