@@ -374,36 +374,44 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Phase 2: Self-organization analysis.
     
-    SOC Hypothesis: Prey evolve toward critical critical point regardless of initial conditions.
+    SOC Hypothesis: When prey_death is allowed to evolve, the population
+    should self-organize toward the critical point (~0.095-0.105 from Phase 1)
+    regardless of initial prey_death value.
     
-    NOTE: Test is currently start evo from different intial prey_death values (?)
-    If SOC holds, then all runs converge to the same final prey_death near critical point.
-    
-    FIXME: This run script needs to be adjusted
+    Test: Start evolution from different initial prey_death values.
+    If SOC holds, all runs converge to similar final evolved_prey_death.
     """
     from joblib import Parallel, delayed
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    # Test at multiple prey_birth values
-    prey_births = cfg.get_prey_births()
-    
-    # Vary intial prey_death
-    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], 5)
+    # Vary initial prey_death across subcritical to supercritical range
+    # Based on Phase 1: critical point ~0.095-0.105
+    initial_prey_deaths = np.array([0.02, 0.04, 0.06, 0.08, 0.10, 0.12])
     
     jobs = []
-    for pb in prey_births:
-        for initial_pd in initial_prey_deaths:
-            for rep in range(cfg.n_replicates):
-                params = {"pb": pb, "initial_pd": initial_pd, "phase": 2}
-                seed = generate_unique_seed(params, rep)
-                jobs.append((pb, initial_pd, cfg.predator_birth, cfg.predator_death,
-                            cfg.grid_size, seed, cfg, True))
+    for initial_pd in initial_prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"initial_pd": initial_pd, "phase": 2}
+            seed = generate_unique_seed(params, rep)
+            
+            # Fixed prey_birth, varying initial prey_death, evolution ON
+            jobs.append((
+                cfg.prey_birth,       # prey_birth (fixed at 0.2)
+                initial_pd,           # prey_death (initial value, will evolve)
+                cfg.predator_birth,   # predator_birth (fixed)
+                cfg.predator_death,   # predator_death (fixed)
+                cfg.grid_size,
+                seed,
+                cfg,
+                True                  # with_evolution=True
+            ))
     
     logger.info(f"Phase 2: {len(jobs):,} simulations")
-    logger.info(f"  prey_birth values: {len(prey_births)}")
-    logger.info(f"  initial prey_death values: {len(initial_prey_deaths)}")
-    logger.info(f"  Replicates: {cfg.n_replicates}")
+    logger.info(f"  Initial prey_death values: {initial_prey_deaths.tolist()}")
+    logger.info(f"  Replicates per condition: {cfg.n_replicates}")
+    logger.info(f"  Evolution: ENABLED (sd={cfg.evolve_sd})")
+    logger.info(f"  Expected convergence: ~0.095-0.105 (critical point)")
     
     output_jsonl = output_dir / "phase2_results.jsonl"
     all_results = []
@@ -419,9 +427,13 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     meta = {
         "phase": 2,
-        "description": "Self-organization toward criticality",
+        "description": "Self-organization toward criticality (SOC test)",
         "n_sims": len(all_results),
         "initial_prey_deaths": initial_prey_deaths.tolist(),
+        "prey_birth": cfg.prey_birth,
+        "evolve_sd": cfg.evolve_sd,
+        "measurement_steps": cfg.measurement_steps,
+        "expected_convergence": "~0.095-0.105",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     with open(output_dir / "phase2_metadata.json", "w") as f:

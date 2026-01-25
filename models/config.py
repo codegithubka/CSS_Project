@@ -66,7 +66,7 @@ class Config:
     """Central configuration for all experiments."""
     
     # Grid settings
-    grid_size: int = 100  #FIXME: Decide default configuration
+    grid_size: int = 1000  #FIXME: Decide default configuration
     densities: Tuple[float, float] = (0.30, 0.15)  # (prey, predator)  #FIXME: Default densities
     
     # For FSS experiments: multiple grid sizes
@@ -207,16 +207,21 @@ PHASE1_CONFIG = Config(
 
 # Phase 2: Self-organization (evolution toward criticality)
 PHASE2_CONFIG = Config(
-    grid_size=100,
-    n_prey_birth=10,
+    grid_size=1000,
+    n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
     n_replicates=30,
-    warmup_steps=1000,
-    measurement_steps=1000,
+    warmup_steps=1000,           # Shorter warmup (evolution starts immediately)
+    measurement_steps=3000,     # Longer measurement to see convergence
+    
+    # Evolution settings
     with_evolution=True,
-    evolve_sd=0.10,
-    collect_pcf=False,  # Not needed for SOC analysis
+    evolve_sd=0.01,             # Smaller mutation rate for smoother convergence
+    evolve_min=0.001,
+    evolve_max=0.20,            # Allow full range
+    
+    collect_pcf=False,
     save_timeseries=True,
-    timeseries_subsample=10,
+    timeseries_subsample=10,    # Track evolution trajectory
 )
 
 # Phase 3: Finite-size scaling at critical point
