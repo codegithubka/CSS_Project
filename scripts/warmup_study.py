@@ -70,15 +70,14 @@ class WarmupStudyConfig:
     sample_interval: int = 10
     
     # Equilibration detection parameters
-    equilibration_window: int = 10  # Rolling window size
-    equilibration_threshold: float = 0.02  # CV threshold for equilibrium
+    equilibration_window: int = 50  # FFT window size (needs to capture oscillation periods)
     
     # Simulation parameters (near critical point)
-    prey_birth: float = 0.22
-    prey_death: float = 0.04
+    prey_birth: float = 0.25
+    prey_death: float = 0.05
     predator_birth: float = 0.2
     predator_death: float = 0.1
-    densities: Tuple[float, float] = (0.30, 0.15)
+    densities: Tuple[float, float] = (0.2, 0.1)
     
     # Update mode
     synchronous: bool = False
@@ -89,80 +88,151 @@ class WarmupStudyConfig:
 # EQUILIBRATION DETECTION
 # =============================================================================
 
-def estimate_equilibration_cv(
+def estimate_equilibration_frequency(
     time_series: np.ndarray,
     sample_interval: int,
-    window: int = 10,
-    threshold: float = 0.02,
+    grid_size: int = 100,
+    base_window: int = 50,
+    n_stable_windows: int = 3,
+    frequency_tolerance: float = 0.2,
 ) -> int:
     """
-    Estimate equilibration step using coefficient of variation (CV).
+    Detect equilibration when a characteristic oscillation frequency dominates.
     
-    Returns the step when rolling CV drops below threshold for a sustained period.
+    Uses spectral analysis (FFT) on sliding windows to find the dominant
+    frequency. Equilibrium is detected when the dominant frequency stabilizes
+    (stops changing significantly between consecutive windows).
+    
+    Parameters
+    ----------
+    time_series : np.ndarray
+        Population density or count over time.
+    sample_interval : int
+        Number of simulation steps between samples.
+    grid_size : int
+        Size of the grid (L). Window size scales with grid size.
+    base_window : int
+        Base FFT window size (number of samples) for L=100.
+        Needs to be large enough to capture oscillation periods.
+    n_stable_windows : int
+        Number of consecutive windows with stable dominant frequency
+        required to declare equilibrium.
+    frequency_tolerance : float
+        Maximum allowed relative change in dominant frequency between
+        consecutive windows to be considered "stable".
+    
+    Returns
+    -------
+    int
+        Estimated equilibration step.
     """
-    if len(time_series) < window * 2:
+    # Scale window with grid size
+    window = max(base_window, int(base_window * (grid_size / 100)))
+    
+    # Need at least 3 windows worth of data
+    if len(time_series) < window * 4:
         return len(time_series) * sample_interval
     
-    # Skip initial transient (first 10% of data)
-    start_idx = max(window, len(time_series) // 10)
+    # Compute dominant frequency for each sliding window
+    step_size = window // 4  # Overlap windows by 75%
+    dominant_freqs = []
+    window_centers = []
     
-    for i in range(start_idx, len(time_series)):
-        recent = time_series[i-window:i]
-        mean_val = np.mean(recent)
+    for start in range(0, len(time_series) - window, step_size):
+        segment = time_series[start:start + window]
         
-        if mean_val > 0:
-            cv = np.std(recent) / mean_val
-            if cv < threshold:
-                # Check if it stays stable for another window
-                if i + window < len(time_series):
-                    next_window = time_series[i:i+window]
-                    next_cv = np.std(next_window) / np.mean(next_window) if np.mean(next_window) > 0 else 1.0
-                    if next_cv < threshold * 1.5:
-                        return i * sample_interval
-                else:
-                    return i * sample_interval
+        # Remove mean (DC component)
+        segment = segment - np.mean(segment)
+        
+        # Compute FFT
+        fft_result = np.fft.rfft(segment)
+        power = np.abs(fft_result) ** 2
+        freqs = np.fft.rfftfreq(window, d=sample_interval)
+        
+        # Skip DC (index 0) and find dominant frequency
+        if len(power) > 1:
+            # Find peak in power spectrum (excluding DC)
+            peak_idx = np.argmax(power[1:]) + 1
+            dominant_freq = freqs[peak_idx]
+            dominant_freqs.append(dominant_freq)
+            window_centers.append(start + window // 2)
+    
+    if len(dominant_freqs) < n_stable_windows + 2:
+        return len(time_series) * sample_interval
+    
+    dominant_freqs = np.array(dominant_freqs)
+    window_centers = np.array(window_centers)
+    
+    # Find where dominant frequency stabilizes
+    # Skip first few windows (definitely transient)
+    start_check = max(2, len(dominant_freqs) // 5)
+    
+    stable_count = 0
+    
+    for i in range(start_check, len(dominant_freqs) - 1):
+        freq_prev = dominant_freqs[i - 1]
+        freq_curr = dominant_freqs[i]
+        
+        # Check if frequency is stable (relative change small)
+        if freq_prev > 0:
+            rel_change = abs(freq_curr - freq_prev) / freq_prev
+        else:
+            rel_change = 1.0 if freq_curr != 0 else 0.0
+        
+        if rel_change < frequency_tolerance:
+            stable_count += 1
+            if stable_count >= n_stable_windows:
+                # Found stable frequency regime
+                eq_sample = window_centers[i - n_stable_windows + 1]
+                return eq_sample * sample_interval
+        else:
+            stable_count = 0
     
     return len(time_series) * sample_interval
 
 
-def estimate_equilibration_autocorr(
+def get_dominant_frequency_series(
     time_series: np.ndarray,
     sample_interval: int,
-    lag_threshold: float = 0.1,
-) -> Tuple[int, float]:
+    window: int,
+) -> tuple:
     """
-    Estimate equilibration via autocorrelation decay.
+    Compute dominant frequency over sliding windows (for diagnostic plotting).
     
-    Returns (equilibration_step, integrated_autocorrelation_time).
+    Returns (window_centers, dominant_frequencies, power_concentration).
     """
-    n = len(time_series)
-    if n < 10:
-        return n * sample_interval, 0.0
+    step_size = window // 4
+    dominant_freqs = []
+    power_concentrations = []
+    window_centers = []
     
-    mean = np.mean(time_series)
-    var = np.var(time_series)
+    for start in range(0, len(time_series) - window, step_size):
+        segment = time_series[start:start + window]
+        segment = segment - np.mean(segment)
+        
+        fft_result = np.fft.rfft(segment)
+        power = np.abs(fft_result) ** 2
+        freqs = np.fft.rfftfreq(window, d=sample_interval)
+        
+        if len(power) > 1:
+            # Dominant frequency (excluding DC)
+            peak_idx = np.argmax(power[1:]) + 1
+            dominant_freq = freqs[peak_idx]
+            dominant_freqs.append(dominant_freq)
+            
+            # Power concentration: fraction of total power in dominant frequency
+            total_power = np.sum(power[1:])  # Exclude DC
+            if total_power > 0:
+                concentration = power[peak_idx] / total_power
+            else:
+                concentration = 0
+            power_concentrations.append(concentration)
+            
+            window_centers.append((start + window // 2) * sample_interval)
     
-    if var == 0:
-        return 0, 0.0
-    
-    # Compute autocorrelation function
-    acf = np.correlate(time_series - mean, time_series - mean, mode='full')
-    acf = acf[n-1:] / (var * n)
-    
-    # Integrated autocorrelation time
-    tau_int = 1.0
-    for lag in range(1, min(n // 4, 100)):
-        if acf[lag] > 0:
-            tau_int += 2 * acf[lag]
-        else:
-            break
-    
-    # Find where ACF drops below threshold
-    for lag, corr in enumerate(acf):
-        if corr < lag_threshold:
-            return lag * sample_interval, tau_int
-    
-    return len(acf) * sample_interval, tau_int
+    return (np.array(window_centers), 
+            np.array(dominant_freqs), 
+            np.array(power_concentrations))
 
 
 # =============================================================================
@@ -195,14 +265,16 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
         logger.info(f"Testing grid size L = {L}")
         logger.info(f"{'='*50}")
         
+        # Show scaled FFT window size
+        scaled_window = max(cfg.equilibration_window, int(cfg.equilibration_window * (L / 100)))
+        logger.info(f"  FFT window size (scaled): {scaled_window} samples")
+        
         # Warmup Numba kernels for this size
         warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
         
         size_results = {
             'time_per_step': [],
-            'equilibration_steps_cv': [],
-            'equilibration_steps_acf': [],
-            'integrated_autocorr_time': [],
+            'equilibration_steps': [],
             'final_prey_density': [],
             'final_pred_density': [],
         }
@@ -242,7 +314,7 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
                     pred_count = np.sum(model.grid == 2)
                     prey_densities.append(prey_count / grid_cells)
                     pred_densities.append(pred_count / grid_cells)
-                model.run(1)
+                model.update()
             
             total_time = time.perf_counter() - t0
             time_per_step = total_time / cfg.max_steps
@@ -250,29 +322,22 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
             prey_densities = np.array(prey_densities)
             pred_densities = np.array(pred_densities)
             
-            # Estimate equilibration using both methods
-            eq_steps_cv = estimate_equilibration_cv(
+            # Estimate equilibration (trend-based, robust to grid size)
+            eq_steps = estimate_equilibration_frequency(
                 prey_densities,
                 cfg.sample_interval,
-                window=cfg.equilibration_window,
-                threshold=cfg.equilibration_threshold,
-            )
-            
-            eq_steps_acf, tau_int = estimate_equilibration_autocorr(
-                prey_densities,
-                cfg.sample_interval,
+                grid_size=L,
+                base_window=cfg.equilibration_window,
             )
             
             size_results['time_per_step'].append(time_per_step)
-            size_results['equilibration_steps_cv'].append(eq_steps_cv)
-            size_results['equilibration_steps_acf'].append(eq_steps_acf)
-            size_results['integrated_autocorr_time'].append(tau_int)
+            size_results['equilibration_steps'].append(eq_steps)
             size_results['final_prey_density'].append(prey_densities[-1])
             size_results['final_pred_density'].append(pred_densities[-1])
             
             if (rep + 1) % max(1, cfg.n_replicates // 5) == 0:
                 logger.info(f"  Replicate {rep+1}/{cfg.n_replicates}: "
-                           f"eq_steps={eq_steps_cv}, time/step={time_per_step*1000:.2f}ms")
+                           f"eq_steps={eq_steps}, time/step={time_per_step*1000:.2f}ms")
         
         # Aggregate results
         results[L] = {
@@ -280,13 +345,10 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
             'grid_cells': L * L,
             'mean_time_per_step': float(np.mean(size_results['time_per_step'])),
             'std_time_per_step': float(np.std(size_results['time_per_step'])),
-            'mean_eq_steps_cv': float(np.mean(size_results['equilibration_steps_cv'])),
-            'std_eq_steps_cv': float(np.std(size_results['equilibration_steps_cv'])),
-            'mean_eq_steps_acf': float(np.mean(size_results['equilibration_steps_acf'])),
-            'std_eq_steps_acf': float(np.std(size_results['equilibration_steps_acf'])),
-            'mean_tau_int': float(np.mean(size_results['integrated_autocorr_time'])),
+            'mean_eq_steps': float(np.mean(size_results['equilibration_steps'])),
+            'std_eq_steps': float(np.std(size_results['equilibration_steps'])),
             'mean_total_warmup_time': float(
-                np.mean(size_results['equilibration_steps_cv']) * 
+                np.mean(size_results['equilibration_steps']) * 
                 np.mean(size_results['time_per_step'])
             ),
             'mean_final_prey_density': float(np.mean(size_results['final_prey_density'])),
@@ -297,8 +359,8 @@ def run_warmup_study(cfg: WarmupStudyConfig, logger: logging.Logger) -> Dict[int
         logger.info(f"\n  Summary for L={L}:")
         logger.info(f"    Time per step: {results[L]['mean_time_per_step']*1000:.2f} ± "
                    f"{results[L]['std_time_per_step']*1000:.2f} ms")
-        logger.info(f"    Equilibration (CV): {results[L]['mean_eq_steps_cv']:.0f} ± "
-                   f"{results[L]['std_eq_steps_cv']:.0f} steps")
+        logger.info(f"    Equilibration steps: {results[L]['mean_eq_steps']:.0f} ± "
+                   f"{results[L]['std_eq_steps']:.0f}")
         logger.info(f"    Total warmup time: {results[L]['mean_total_warmup_time']:.2f} s")
     
     return results
@@ -342,17 +404,11 @@ def plot_warmup_scaling(
     
     # Panel 2: Equilibration steps vs L (log-log)
     ax = axes[1]
-    eq_steps = [results[L]['mean_eq_steps_cv'] for L in sizes]
-    eq_stds = [results[L]['std_eq_steps_cv'] for L in sizes]
     
+    eq_steps = [results[L]['mean_eq_steps'] for L in sizes]
+    eq_stds = [results[L]['std_eq_steps'] for L in sizes]
     ax.errorbar(sizes, eq_steps, yerr=eq_stds, fmt='o-', capsize=5, 
-                linewidth=2, color='forestgreen', markersize=8, label='CV method')
-    
-    # Also plot ACF method
-    eq_steps_acf = [results[L]['mean_eq_steps_acf'] for L in sizes]
-    eq_stds_acf = [results[L]['std_eq_steps_acf'] for L in sizes]
-    ax.errorbar(sizes, eq_steps_acf, yerr=eq_stds_acf, fmt='s--', capsize=5,
-                linewidth=2, color='darkorange', markersize=6, alpha=0.7, label='ACF method')
+                linewidth=2, color='forestgreen', markersize=8)
     
     ax.set_xscale('log')
     ax.set_yscale('log')
@@ -426,9 +482,10 @@ def plot_scaling_summary(
     # Plot equilibration steps normalized by theoretical scaling
     # Try different z values
     for z, color, style in [(1.0, 'green', '--'), (1.5, 'orange', '-.'), (2.0, 'red', ':')]:
-        eq_normalized = [results[L]['mean_eq_steps_cv'] / (L**z) for L in sizes]
+        eq_normalized = [results[L]['mean_eq_steps'] / (L**z) for L in sizes]
         # Normalize to first point for comparison
-        eq_normalized = [x / eq_normalized[0] for x in eq_normalized]
+        if eq_normalized[0] > 0:
+            eq_normalized = [x / eq_normalized[0] for x in eq_normalized]
         ax.plot(sizes, eq_normalized, style, color=color, linewidth=2, alpha=0.7,
                 label=f'Eq. steps / L^{z:.1f} (normalized)')
     
@@ -449,6 +506,140 @@ def plot_scaling_summary(
 
 
 # =============================================================================
+# DIAGNOSTIC VISUALIZATION
+# =============================================================================
+
+def run_diagnostic(
+    grid_sizes: List[int],
+    cfg: WarmupStudyConfig,
+    output_dir: Path,
+    logger: logging.Logger,
+    dpi: int = 150,
+):
+    """
+    Run diagnostic simulations to visualize population dynamics and equilibration detection.
+    
+    Creates detailed plots showing:
+    - Population time series for each grid size
+    - Rolling means used for trend detection
+    - Direction of changes (+ or -)
+    - Detected equilibration point
+    """
+    from models.CA import PP
+    
+    try:
+        from models.numba_optimized import warmup_numba_kernels, set_numba_seed, NUMBA_AVAILABLE
+        USE_NUMBA = NUMBA_AVAILABLE
+    except ImportError:
+        USE_NUMBA = False
+        def warmup_numba_kernels(size, **kwargs): pass
+        def set_numba_seed(seed): pass
+    
+    n_sizes = len(grid_sizes)
+    fig, axes = plt.subplots(n_sizes, 3, figsize=(15, 4 * n_sizes))
+    if n_sizes == 1:
+        axes = axes.reshape(1, -1)
+    
+    for row, L in enumerate(grid_sizes):
+        logger.info(f"Diagnostic run for L={L}...")
+        
+        # Warmup Numba
+        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
+        
+        seed = 42 + L
+        np.random.seed(seed)
+        if USE_NUMBA:
+            set_numba_seed(seed)
+        
+        # Run simulation
+        model = PP(
+            rows=L, cols=L,
+            densities=cfg.densities,
+            neighborhood="moore",
+            params={
+                "prey_birth": cfg.prey_birth,
+                "prey_death": cfg.prey_death,
+                "predator_death": cfg.predator_death,
+                "predator_birth": cfg.predator_birth,
+            },
+            seed=seed,
+            synchronous=cfg.synchronous,
+            directed_hunting=cfg.directed_hunting,
+        )
+        
+        # Collect data
+        prey_densities = []
+        pred_densities = []
+        grid_cells = L * L
+        
+        for step in range(cfg.max_steps):
+            if step % cfg.sample_interval == 0:
+                prey_densities.append(np.sum(model.grid == 1) / grid_cells)
+                pred_densities.append(np.sum(model.grid == 2) / grid_cells)
+            model.update()
+        
+        prey_densities = np.array(prey_densities)
+        pred_densities = np.array(pred_densities)
+        steps = np.arange(len(prey_densities)) * cfg.sample_interval
+        
+        # Compute frequency analysis
+        base_window = cfg.equilibration_window
+        window = max(base_window, int(base_window * (L / 100)))
+        
+        # Get frequency series for plotting
+        freq_centers, dominant_freqs, power_conc = get_dominant_frequency_series(
+            prey_densities, cfg.sample_interval, window
+        )
+        
+        # Detect equilibration
+        eq_steps = estimate_equilibration_frequency(
+            prey_densities, cfg.sample_interval, grid_size=L, base_window=base_window
+        )
+        
+        # Panel 1: Population time series
+        ax = axes[row, 0]
+        ax.plot(steps, prey_densities, 'g-', alpha=0.7, linewidth=1, label='Prey')
+        ax.plot(steps, pred_densities, 'r-', alpha=0.7, linewidth=1, label='Predator')
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2, label=f'Equilibrium @ {eq_steps}')
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Density")
+        ax.set_title(f"L={L}: Population Dynamics (window={window})")
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 2: Dominant frequency over time
+        ax = axes[row, 1]
+        if len(dominant_freqs) > 0:
+            ax.plot(freq_centers, dominant_freqs * 1000, 'b-', linewidth=1.5, marker='o', markersize=3)
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2)
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Dominant frequency (mHz)")
+        ax.set_title(f"L={L}: Dominant Oscillation Frequency")
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 3: Power concentration (how dominant is the main frequency)
+        ax = axes[row, 2]
+        if len(power_conc) > 0:
+            ax.plot(freq_centers, power_conc, 'purple', linewidth=1.5, marker='o', markersize=3)
+            ax.fill_between(freq_centers, 0, power_conc, alpha=0.3, color='purple')
+        ax.axvline(eq_steps, color='blue', linestyle='--', linewidth=2, label=f'Detected @ {eq_steps}')
+        ax.set_xlabel("Simulation steps")
+        ax.set_ylabel("Power concentration")
+        ax.set_title(f"L={L}: Frequency Dominance")
+        ax.set_ylim(0, 1)
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_file = output_dir / "warmup_diagnostic.png"
+    plt.savefig(output_file, dpi=dpi)
+    plt.close()
+    
+    logger.info(f"Saved diagnostic plot to {output_file}")
+    return output_file
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -458,6 +649,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  %(prog)s --diagnostic                       # Visualize dynamics first!
   %(prog)s                                    # Default settings
   %(prog)s --sizes 50 100 150 200 300         # Custom grid sizes
   %(prog)s --replicates 20                    # More replicates for statistics
@@ -482,6 +674,8 @@ Examples:
                         help='Prey birth rate (default: 0.22)')
     parser.add_argument('--prey-death', type=float, default=0.04,
                         help='Prey death rate (default: 0.04)')
+    parser.add_argument('--diagnostic', action='store_true',
+                        help='Run diagnostic mode: visualize dynamics and equilibration detection')
     
     args = parser.parse_args()
     
@@ -526,6 +720,17 @@ Examples:
         json.dump(asdict(cfg), f, indent=2)
     logger.info(f"Saved config to {config_file}")
     
+    # Diagnostic mode: visualize dynamics without full study
+    if args.diagnostic:
+        logger.info("\n" + "=" * 60)
+        logger.info("DIAGNOSTIC MODE")
+        logger.info("=" * 60)
+        logger.info("Running single simulations to visualize dynamics...")
+        run_diagnostic(list(cfg.grid_sizes), cfg, output_dir, logger, args.dpi)
+        logger.info("\nDiagnostic complete! Check warmup_diagnostic.png")
+        logger.info("Adjust parameters based on the plots, then run without --diagnostic")
+        return
+    
     # Run study
     results = run_warmup_study(cfg, logger)
     
@@ -554,15 +759,26 @@ Examples:
     
     # Compute scaling exponents
     if len(sizes) >= 2:
-        eq_steps = [results[L]['mean_eq_steps_cv'] for L in sizes]
+        eq_steps = [results[L]['mean_eq_steps'] for L in sizes]
         total_times = [results[L]['mean_total_warmup_time'] for L in sizes]
         
-        log_L = np.log(sizes)
-        log_eq = np.log(eq_steps)
-        log_T = np.log(total_times)
+        # Filter out any zero or negative values for log
+        valid_eq = [(L, eq) for L, eq in zip(sizes, eq_steps) if eq > 0]
+        valid_T = [(L, T) for L, T in zip(sizes, total_times) if T > 0]
         
-        z_eq, _, r_eq, _, _ = linregress(log_L, log_eq)
-        z_total, _, r_total, _, _ = linregress(log_L, log_T)
+        if len(valid_eq) >= 2:
+            log_L_eq = np.log([x[0] for x in valid_eq])
+            log_eq = np.log([x[1] for x in valid_eq])
+            z_eq, _, r_eq, _, _ = linregress(log_L_eq, log_eq)
+        else:
+            z_eq, r_eq = 0, 0
+        
+        if len(valid_T) >= 2:
+            log_L_T = np.log([x[0] for x in valid_T])
+            log_T = np.log([x[1] for x in valid_T])
+            z_total, _, r_total, _, _ = linregress(log_L_T, log_T)
+        else:
+            z_total, r_total = 0, 0
         
         logger.info(f"Equilibration steps scaling: t_eq ~ L^{z_eq:.2f} (R² = {r_eq**2:.3f})")
         logger.info(f"Total warmup time scaling: T_warmup ~ L^{z_total:.2f} (R² = {r_total**2:.3f})")
