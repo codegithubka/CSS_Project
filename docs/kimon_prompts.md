@@ -363,3 +363,8 @@ For parallel simulations, use different seeds per worker (e.g., base_seed + work
 
 
 8. Write a few run mock tests for the analysis file to see that the plots render properly.
+
+
+## Refactoring Main Experiment Script
+
+Help me create a skeletal version of the updated experiments script for HPC that meets tha phase requirements outlined. The config class has been migrated to config.py. 

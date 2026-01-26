@@ -8,6 +8,12 @@ from typing import Tuple, Dict, Optional
 
 import numpy as np
 import logging
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from models.numba_optimized import PPKernel, set_numba_seed
 
 # Module logger

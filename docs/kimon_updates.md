@@ -297,6 +297,20 @@ NOTE:
 Warmup and Measurement time must be scaled according to grid size. We need to write a method to estimate the approximate simulaiton time required. (Sary is working on that.)
 
 
+## Updates (25/1)
+
+
+Refactored ```experiments.py``` according to ```experiments.md```. Phase 4 and Phase 6 of the implementation are still unclear to me:
+
+- Phase 4: We are currently varying ```predator_birth``` and ```predator_birth``` only.
+
+- Phase 6: Will implement if all the other phases pass successfully.
+
+TODO: We need to start drafting a proper version of the analyis (```analysis.py```) for postprocessing of all the data we are currenlty collecting and plotting utilities to visualize them.
+
+
+
+
 
 
 
