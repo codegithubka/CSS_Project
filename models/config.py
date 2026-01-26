@@ -83,8 +83,7 @@ class Config:
     critical_prey_death: float = 0.04 # FIXME; Change after obtaining results
     
     # Prey parameter sweep (Phase 1)
-    prey_birth_range: Tuple[float, float] = (0.10, 0.35)
-    prey_death_range: Tuple[float, float] = (0.0, 0.20)
+    prey_death_range: Tuple[float, float] = (0.0, 0.2)
     n_prey_birth: int = 15   # FIXME: Decide number of grid points along prey axes
     n_prey_death: int = 20
     
@@ -105,7 +104,7 @@ class Config:
     # Evo
     with_evolution: bool = False
     evolve_sd: float = 0.10
-    evolve_min: float = 0.001
+    evolve_min: float = 0.0
     evolve_max: float = 0.10
     
     # Sensitivity: mutation strength values to test
@@ -216,7 +215,7 @@ PHASE2_CONFIG = Config(
     # Evolution settings
     with_evolution=True,
     evolve_sd=0.01,             # Smaller mutation rate for smoother convergence
-    evolve_min=0.001,
+    evolve_min=0.0,
     evolve_max=0.20,            # Allow full range
     
     collect_pcf=False,
