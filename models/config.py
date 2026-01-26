@@ -238,33 +238,17 @@ PHASE3_CONFIG = Config(
 
 # Phase 4: Sensitivity analysis
 PHASE4_CONFIG = Config(
-    grid_size=250,
-    predator_birth_values=(0.15, 0.20, 0.25, 0.30),
-    predator_death_values=(0.05, 0.10, 0.15, 0.20),
-    n_prey_death=10,
-    prey_death_range=(0.01, 0.10),
-    n_replicates=10,
-    warmup_steps=500,
-    measurement_steps=500,
+    grid_size=250,          # As requested
+    n_replicates=10,        # As requested
+    warmup_steps=500,       # As requested
+    measurement_steps=500,  # As requested
     with_evolution=False,
     collect_pcf=False,
     save_timeseries=True,
     timeseries_subsample=10,
-    
-   
 )
-"""
-Phase 4 Reconfiguration Notes:
 
-We vary evetyhing
-pred death and birth
-prey death and birth
-11 values for each from 0 to 1
-10 reps
-grid size of 250
-64 cores
-500 + 500 warmup and measuremnt
-"""
+
 # Phase 5: Perturbation analysis (critical slowing down)
 PHASE5_CONFIG = Config(
     grid_size=100,

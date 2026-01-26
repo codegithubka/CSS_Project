@@ -4,8 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
-#SBATCH --time=04:00:00
-#SBATCH --mem=64G
+#SBATCH --time=08:00:00
+#SBATCH --mem=16G
 #SBATCH --output=/home/kanagnostopoul/CSS_Project/pp_phase4_%j.out
 #SBATCH --error=/home/kanagnostopoul/CSS_Project/pp_phase4_%j.err
 

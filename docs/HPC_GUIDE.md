@@ -39,7 +39,7 @@ scancel <JOBID>
 
 # Monitoring live progress
 
-tail -f logs_<JOBID>.err
+tail -f logs_18702594.err
 
 # Watch task completetion
 

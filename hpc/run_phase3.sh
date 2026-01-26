@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=pp_phase3
-#SBATCH --partition=rome
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --time=02:00:00
 #SBATCH --mem=64G
 #SBATCH --output=/home/kanagnostopoul/CSS_Project/pp_phase3_%j.out
@@ -35,7 +35,7 @@ echo "CPUs:       $SLURM_CPUS_PER_TASK"
 echo "Start:      $(date)"
 echo "Working dir: $(pwd)"
 echo "========================================"
-
+x
 # -----------------------------------------------------------------------------
 # Environment Setup
 # -----------------------------------------------------------------------------
