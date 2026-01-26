@@ -125,7 +125,7 @@ def load_sensitivity_results(results_dir: Path) -> List[Dict]:
         return json.load(f)
 
 
-def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
+def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Load bifurcation analysis results.
     
@@ -133,8 +133,11 @@ def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray]
     -------
     sweep_params : np.ndarray
         1D array of control parameter values (prey death rates).
-    results : np.ndarray
-        2D array of shape (n_sweep, n_replicates) with population counts
+    prey_results : np.ndarray
+        2D array of shape (n_sweep, n_replicates) with prey population counts
+        at equilibrium.
+    predator_results : np.ndarray
+        2D array of shape (n_sweep, n_replicates) with predator population counts
         at equilibrium.
     """
     npz_file = results_dir / "bifurcation_results.npz"
@@ -143,12 +146,27 @@ def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray]
     if npz_file.exists():
         logging.info(f"Loading bifurcation results from {npz_file}")
         data = np.load(npz_file)
-        return data['sweep_params'], data['results']
+        # Handle both old format (single 'results') and new format (prey/predator)
+        if 'prey_results' in data:
+            return data['sweep_params'], data['prey_results'], data['predator_results']
+        else:
+            # Old format - only prey results, create empty predator array
+            prey_results = data['results']
+            predator_results = np.full_like(prey_results, np.nan)
+            return data['sweep_params'], prey_results, predator_results
     elif json_file.exists():
         logging.info(f"Loading bifurcation results from {json_file}")
         with open(json_file, 'r') as f:
             data = json.load(f)
-        return np.array(data['sweep_params']), np.array(data['results'])
+        # Handle both old and new format
+        if 'prey_results' in data:
+            return (np.array(data['sweep_params']), 
+                    np.array(data['prey_results']),
+                    np.array(data['predator_results']))
+        else:
+            prey_results = np.array(data['results'])
+            predator_results = np.full_like(prey_results, np.nan)
+            return np.array(data['sweep_params']), prey_results, predator_results
     else:
         raise FileNotFoundError(f"Bifurcation results not found in {results_dir}")
 
@@ -575,12 +593,14 @@ def plot_fss_analysis(fss_results: List[Dict], output_dir: Path, dpi: int = 150)
     logging.info(f"Saved {output_file}")
 
 
-def plot_bifurcation_diagram(sweep_params: np.ndarray, results: np.ndarray,
+def plot_bifurcation_diagram(sweep_params: np.ndarray, 
+                             prey_results: np.ndarray,
+                             predator_results: np.ndarray,
                              output_dir: Path, dpi: int = 150,
                              control_label: str = "Prey Death Rate",
                              population_label: str = "Population at Equilibrium"):
     """
-    Generate a stochastic bifurcation diagram.
+    Generate a stochastic bifurcation diagram for both prey and predator.
     
     Shows the distribution of equilibrium population counts as a function of
     a control parameter (e.g., prey death rate), with scatter points for each
@@ -591,10 +611,13 @@ def plot_bifurcation_diagram(sweep_params: np.ndarray, results: np.ndarray,
     sweep_params : np.ndarray
         1D array of control parameter values (e.g., prey death rates).
         Shape: (n_sweep,)
-    results : np.ndarray
-        2D array of population counts at equilibrium.
+    prey_results : np.ndarray
+        2D array of prey population counts at equilibrium.
         Shape: (n_sweep, n_replicates) where rows correspond to sweep_params
         and columns are replicate simulation runs.
+    predator_results : np.ndarray
+        2D array of predator population counts at equilibrium.
+        Shape: (n_sweep, n_replicates).
     output_dir : Path
         Directory to save the output figure.
     dpi : int
@@ -604,36 +627,64 @@ def plot_bifurcation_diagram(sweep_params: np.ndarray, results: np.ndarray,
     population_label : str
         Label for y-axis (population count).
     """
-    n_sweep, n_replicates = results.shape
+    n_sweep, n_replicates = prey_results.shape
+    has_predator_data = not np.all(np.isnan(predator_results))
     
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(14, 8))
     
     # Scatter all individual replicates with transparency
+    # Prey - green tones
     for i, param in enumerate(sweep_params):
         ax.scatter(
             np.full(n_replicates, param),
-            results[i, :],
-            alpha=0.3, s=15, c='steelblue', edgecolors='none'
+            prey_results[i, :],
+            alpha=0.3, s=15, c='forestgreen', edgecolors='none'
         )
     
-    # Compute summary statistics
-    means = np.mean(results, axis=1)
-    medians = np.median(results, axis=1)
-    q25 = np.percentile(results, 25, axis=1)
-    q75 = np.percentile(results, 75, axis=1)
+    # Predator - red tones (if data available)
+    if has_predator_data:
+        for i, param in enumerate(sweep_params):
+            ax.scatter(
+                np.full(n_replicates, param),
+                predator_results[i, :],
+                alpha=0.3, s=15, c='crimson', edgecolors='none'
+            )
     
-    # Plot median line and IQR envelope
-    ax.fill_between(sweep_params, q25, q75, alpha=0.25, color='coral',
-                    label='IQR (25th-75th percentile)')
-    ax.plot(sweep_params, medians, 'o-', color='darkred', linewidth=2,
-            markersize=5, label='Median')
-    ax.plot(sweep_params, means, 's--', color='black', linewidth=1.5,
-            markersize=4, alpha=0.7, label='Mean')
+    # Compute summary statistics for prey
+    prey_means = np.mean(prey_results, axis=1)
+    prey_medians = np.median(prey_results, axis=1)
+    prey_q25 = np.percentile(prey_results, 25, axis=1)
+    prey_q75 = np.percentile(prey_results, 75, axis=1)
+    
+    # Plot prey median line and IQR envelope
+    ax.fill_between(sweep_params, prey_q25, prey_q75, alpha=0.2, color='green',
+                    label='Prey IQR')
+    ax.plot(sweep_params, prey_medians, 'o-', color='darkgreen', linewidth=2,
+            markersize=5, label='Prey Median')
+    ax.plot(sweep_params, prey_means, 's--', color='forestgreen', linewidth=1.5,
+            markersize=4, alpha=0.7, label='Prey Mean')
+    
+    # Compute and plot predator statistics if available
+    if has_predator_data:
+        pred_means = np.mean(predator_results, axis=1)
+        pred_medians = np.median(predator_results, axis=1)
+        pred_q25 = np.percentile(predator_results, 25, axis=1)
+        pred_q75 = np.percentile(predator_results, 75, axis=1)
+        
+        ax.fill_between(sweep_params, pred_q25, pred_q75, alpha=0.2, color='red',
+                        label='Predator IQR')
+        ax.plot(sweep_params, pred_medians, 'o-', color='darkred', linewidth=2,
+                markersize=5, label='Predator Median')
+        ax.plot(sweep_params, pred_means, 's--', color='crimson', linewidth=1.5,
+                markersize=4, alpha=0.7, label='Predator Mean')
     
     ax.set_xlabel(control_label)
     ax.set_ylabel(population_label)
-    ax.set_title(f"Stochastic Bifurcation Diagram\n({n_replicates} replicates per parameter value)")
-    ax.legend(loc='best')
+    title = f"Stochastic Bifurcation Diagram\n({n_replicates} replicates per parameter value)"
+    if has_predator_data:
+        title = f"Prey-Predator {title}"
+    ax.set_title(title)
+    ax.legend(loc='best', ncol=2)
     ax.grid(True, alpha=0.3)
     
     # Add rug plot at bottom showing parameter sampling density
@@ -887,10 +938,11 @@ Examples:
     # Bifurcation diagram
     if plot_all or args.bifurcation_only:
         try:
-            sweep_params, bifurc_results = load_bifurcation_results(results_dir)
+            sweep_params, prey_results, predator_results = load_bifurcation_results(results_dir)
             logging.info(f"Loaded bifurcation results: {len(sweep_params)} sweep values, "
-                        f"{bifurc_results.shape[1]} replicates each")
-            plot_bifurcation_diagram(sweep_params, bifurc_results, output_dir, args.dpi)
+                        f"{prey_results.shape[1]} replicates each")
+            plot_bifurcation_diagram(sweep_params, prey_results, predator_results, 
+                                    output_dir, args.dpi)
         except FileNotFoundError as e:
             logging.warning(f"Bifurcation results not found: {e}")
     
