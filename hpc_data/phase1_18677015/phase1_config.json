@@ -1,0 +1,77 @@
+{
+  "grid_size": 1000,
+  "densities": [
+    0.3,
+    0.15
+  ],
+  "grid_sizes": [
+    100,
+    200,
+    500,
+    1000
+  ],
+  "prey_birth": 0.2,
+  "prey_death": 0.05,
+  "predator_birth": 0.8,
+  "predator_death": 0.05,
+  "critical_prey_birth": 0.22,
+  "critical_prey_death": 0.04,
+  "prey_birth_range": [
+    0.1,
+    0.35
+  ],
+  "prey_death_range": [
+    0.0,
+    0.2
+  ],
+  "n_prey_birth": 15,
+  "n_prey_death": 20,
+  "predator_birth_values": [
+    0.15,
+    0.2,
+    0.25,
+    0.3
+  ],
+  "predator_death_values": [
+    0.05,
+    0.1,
+    0.15,
+    0.2
+  ],
+  "prey_death_offsets": [
+    -0.02,
+    -0.01,
+    0.0,
+    0.01,
+    0.02
+  ],
+  "n_replicates": 30,
+  "warmup_steps": 1000,
+  "measurement_steps": 1000,
+  "with_evolution": false,
+  "evolve_sd": 0.1,
+  "evolve_min": 0.001,
+  "evolve_max": 0.1,
+  "sensitivity_sd_values": [
+    0.02,
+    0.05,
+    0.1,
+    0.15,
+    0.2
+  ],
+  "synchronous": false,
+  "directed_hunting": false,
+  "directed_hunting_values": [
+    false,
+    true
+  ],
+  "save_timeseries": false,
+  "timeseries_subsample": 10,
+  "collect_pcf": true,
+  "pcf_sample_rate": 0.2,
+  "pcf_max_distance": 20.0,
+  "pcf_n_bins": 20,
+  "min_density_for_analysis": 0.002,
+  "perturbation_magnitude": 0.1,
+  "n_jobs": 32
+}

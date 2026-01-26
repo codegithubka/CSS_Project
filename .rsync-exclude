@@ -1,0 +1,15 @@
+# .rsync-exclude
+.venv/
+__pycache__/
+*.pyc
+.git/
+*.nbc
+*.nbi
+.pytest_cache/
+results/
+*.png
+*.pdf
+.DS_Store
+.ipynb_checkpoints/
+
+

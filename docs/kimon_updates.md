@@ -275,28 +275,6 @@ We have 48 tests cases validating the folloiwing:
 - Edge cases with extreme parameter values
 
 
-## Issues to be resolved
-
-1. Grid size for HPC run
-2. Number of replicates for statistal power
-3. Directed and/or undirected runs 
-4. Evolving and non-evolving runs?
-5. Mean field baseline or non evolving basiline
-6. Warmup period and measurement steps (i.e how many steps do we need to avoid init bias?)
-7. Measurement frequency for statistical accuracy
-8. Default parameters (Need Storm's input on this one).
-
-Options:
-
-1. Asymmetric repliates for non-evolving runs
-2. Coarse initial parameter sweep grid
-3. Discard non-evo runs and use mean field baseline instead or the opposite
-
-NOTE:
-
-Warmup and Measurement time must be scaled according to grid size. We need to write a method to estimate the approximate simulaiton time required. (Sary is working on that.)
-
-
 ## Updates (25/1)
 
 
@@ -307,13 +285,3 @@ Refactored ```experiments.py``` according to ```experiments.md```. Phase 4 and P
 - Phase 6: Will implement if all the other phases pass successfully.
 
 TODO: We need to start drafting a proper version of the analyis (```analysis.py```) for postprocessing of all the data we are currenlty collecting and plotting utilities to visualize them.
-
-
-
-
-
-
-
-
-
-
