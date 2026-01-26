@@ -406,22 +406,20 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
     # Test at multiple prey_birth values
-    prey_births = cfg.get_prey_births()
-    
+    pb = 0.2
     # Vary intial prey_death
-    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], 20)
+    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], cfg.n_prey_death)
     
     jobs = []
-    for pb in prey_births:
-        for initial_pd in initial_prey_deaths:
-            for rep in range(cfg.n_replicates):
-                params = {"pb": pb, "initial_pd": initial_pd, "phase": 2}
-                seed = generate_unique_seed(params, rep)
-                jobs.append((pb, initial_pd, cfg.predator_birth, cfg.predator_death,
-                            cfg.grid_size, seed, cfg, True))
+    for initial_pd in initial_prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pb": pb, "initial_pd": initial_pd, "phase": 2}
+            seed = generate_unique_seed(params, rep)
+            jobs.append((pb, initial_pd, cfg.predator_birth, cfg.predator_death,
+                        cfg.grid_size, seed, cfg, True))
     
     logger.info(f"Phase 2: {len(jobs):,} simulations")
-    logger.info(f"  prey_birth values: {len(prey_births)}")
+    logger.info(f"  prey_birth value: {pb}")
     logger.info(f"  initial prey_death values: {len(initial_prey_deaths)}")
     logger.info(f"  Replicates: {cfg.n_replicates}")
     
@@ -466,10 +464,12 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     logger.info(f"Phase 3: FSS at critical point (pb={pb}, pd={pd})")
     
+    for L in cfg.grid_sizes:
+        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
+
+    
     jobs = []
     for L in cfg.grid_sizes: # Sweep through grid sizes
-        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
-        
         for rep in range(cfg.n_replicates):
             params = {"L": L, "phase": 3}
             seed = generate_unique_seed(params, rep)

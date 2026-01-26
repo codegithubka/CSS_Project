@@ -85,7 +85,7 @@ class Config:
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
     n_prey_birth: int = 15   # FIXME: Decide number of grid points along prey axes
-    n_prey_death: int = 20
+    n_prey_death: int = 5
     
     # Predator parameter sweep (Phase 4 sensitivity)
     predator_birth_values: Tuple[float, ...] = (0.15, 0.20, 0.25, 0.30) #FIXME: Bogus values for now
@@ -208,7 +208,7 @@ PHASE1_CONFIG = Config(
 PHASE2_CONFIG = Config(
     grid_size=1000,
     n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
-    n_replicates=20,
+    n_replicates=10,
     warmup_steps=1000,           # Shorter warmup (evolution starts immediately)
     measurement_steps=5000,     # Longer measurement to see convergence
     
@@ -228,6 +228,8 @@ PHASE3_CONFIG = Config(
     n_replicates=20,
     warmup_steps=1000,
     measurement_steps=1000,
+    critical_prey_birth=0.20,      # Add explicitly
+    critical_prey_death=0.0963,    # Add explicitly - verify from Phase 1!
     collect_pcf=False,
     save_timeseries=False,
     with_evolution=False,
