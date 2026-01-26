@@ -22,7 +22,6 @@ Usage:
 # This functionality is not yet implemented here. We can still derive that data
 # from the full time series using np.diff(prey_timeseries)
 
-
 # NOTE (2): Post-processing utilities and plotting are in scripts/analysis.py. This script should
 # solely focus on running the experiments and saving raw results.
 
@@ -45,11 +44,11 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 # Project imports
-project_root = str(Path(__file__).parent)
+project_root = str(Path(__file__).parent.parent)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from config import Config, get_phase_config, PHASE_CONFIGS
+from models.config import Config, get_phase_config, PHASE_CONFIGS
 
 # Numba imports
 try:
@@ -194,6 +193,9 @@ def run_single_simulation(
     for _ in range(warmup_steps):
         model.update()
         
+    if with_evolution:
+        model._evolution_stopped = True
+        
     # Measurement phase: start collecting our mertics
     prey_pops, pred_pops = [], [] # Prey populations and predator populations
     evolved_means, evolved_stds = [], [] # Evolution stats over time
@@ -219,25 +221,27 @@ def run_single_simulation(
             evolved_stds.append(stats["std"])
         
         # Cluster analysis (at end of measurement)
-        if step == measurement_steps - 1 and prey >= min_count and pred >= (min_count // 4):
-            prey_stats = get_cluster_stats_fast(model.grid, 1)
-            pred_stats = get_cluster_stats_fast(model.grid, 2)
+        if step == measurement_steps - 1:
+            prey_survived = prey_pops[-1] > min_count
+            pred_survived = pred_pops[-1] > (min_count // 4)
             
-            cluster_sizes_prey = prey_stats['sizes'].tolist()
-            cluster_sizes_pred = pred_stats['sizes'].tolist()
+            if prey_survived:
+                prey_stats = get_cluster_stats_fast(model.grid, 1)
+                cluster_sizes_prey = prey_stats['sizes'].tolist()
+                largest_fractions_prey.append(prey_stats['largest_fraction'])
             
-            largest_fractions_prey.append(prey_stats['largest_fraction'])
-            largest_fractions_pred.append(pred_stats['largest_fraction'])
-            # NOTE: Change in largest fraction calculation if needed for critical point location
+            if pred_survived:
+                pred_stats = get_cluster_stats_fast(model.grid, 2)
+                cluster_sizes_pred = pred_stats['sizes'].tolist()
+                largest_fractions_pred.append(pred_stats['largest_fraction'])
             
-            # PCF
-            if compute_pcf:
+            # PCF requires both
+            if compute_pcf and prey_survived and pred_survived:
                 max_dist = min(grid_size / 2, cfg.pcf_max_distance)
                 pcf_data = compute_all_pcfs_fast(model.grid, max_dist, cfg.pcf_n_bins)
                 pcf_samples['prey_prey'].append(pcf_data['prey_prey'])
                 pcf_samples['pred_pred'].append(pcf_data['pred_pred'])
-                pcf_samples['prey_pred'].append(pcf_data['prey_pred'])
-                
+                pcf_samples['prey_pred'].append(pcf_data['prey_pred'])  
                 
     # Compile results
     result = {
@@ -337,7 +341,7 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Phase 1: Parameter sweep to find critical point.
     
-    - 2D sweep of prey_birth × prey_death
+    - 2D sweep of prey_birth prey_death
     - Both with and without evolution
     - Outputs: bifurcation data, cluster distributions
     """
@@ -345,30 +349,22 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    prey_births = cfg.get_prey_births()
     prey_deaths = cfg.get_prey_deaths()
     
     # Build job list
     jobs = []
-    # Sweep through prey_birth and prey_death
-    for pb in prey_births:
-        for pd in prey_deaths:
-            for rep in range(cfg.n_replicates):
-                params = {"pb": pb, "pd": pd}
+    # Sweep through prey_death only (prey_birth is fixed)
+    for pd in prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pd": pd}
+            
+            seed = generate_unique_seed(params, rep)
+            jobs.append((cfg.prey_birth, pd, cfg.predator_birth, cfg.predator_death, 
+                        cfg.grid_size, seed, cfg, False))
                 
-                # Non-evolution run #FIXME: Check if both evo and non-evo are needed for phase 1
-                seed = generate_unique_seed(params, rep)
-                jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death, 
-                            cfg.grid_size, seed, cfg, False))
-                
-                # Evolution run
-                evo_seed = generate_unique_seed(params, rep + 1_000_000)
-                jobs.append((pb, pd, cfg.predator_birth, cfg.predator_death,
-                            cfg.grid_size, evo_seed, cfg, True))
     
     logger.info(f"Phase 1: {len(jobs):,} simulations")
-    logger.info(f"  Grid: {cfg.n_prey_birth} × {cfg.n_prey_death} × {cfg.n_replicates} reps × 2 (evo/no-evo)")
-    
+    logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
     # Run with incremental saving
     output_jsonl = output_dir / "phase1_results.jsonl"
     all_results = []
@@ -405,6 +401,8 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     NOTE: Test is currently start evo from different intial prey_death values (?)
     If SOC holds, then all runs converge to the same final prey_death near critical point.
+    
+    FIXME: This run script needs to be adjusted
     """
     from joblib import Parallel, delayed
     
@@ -414,7 +412,7 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     prey_births = cfg.get_prey_births()
     
     # Vary intial prey_death
-    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], 5)
+    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], 20)
     
     jobs = []
     for pb in prey_births:

@@ -6,7 +6,8 @@ ssh kanagnostopoul@snellius.surf.nl
 # On a separate terminal run the following
 
 # Upload the entire project directory (including your models/ folder)
-scp -r ~/CSS_Project kanagnostopoul@snellius.surf.nl:~/
+rsync -avz --progress --exclude-from='.rsync-exclude' \
+    ~/CSS_Project/ kanagnostopoul@snellius.surf.nl:~/CSS_Project/
 
 # On the Snellius terminal
 
@@ -41,11 +42,12 @@ tail -f logs_<JOBID>.err
 
 # Watch task completetion
 
+watch -n 5 squeue -u $USER  
 watch -n 10 "ls -1 results_JOBID  | wc -l"
 
 # Fetching the results once the job is done
 
-scp -r kanagnostopoul@snellius.surf.nl:~/results_18532145 ~/Downloads/
+scp -r kanagnostopoul@snellius.surf.nl:~/CSS_Project/results/phase1_ 18682575/ ./results/
 ```
 
 The jobscript template can be found in ```run_analysis.sh``` (default rome paritition).
