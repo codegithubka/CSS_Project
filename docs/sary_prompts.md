@@ -941,3 +941,15 @@ Examples:
 if __name__ == "__main__":
     main()
 
+(Phase 1 and 1.5) (Criticality)
+Statistical Test For Power Law using power law package 
+Bifurcation
+Cluster size distribution
+
+(Phase 2): (Self orgaization)
+Box plots (x axis-inital death rate, y axis - final or converged death rate)
+
+(Phase 3): (Finite Size)
+log log plots of cluster size disstribution with cutoff (because of grid size)
+
+(Phase 4): Sensitivity

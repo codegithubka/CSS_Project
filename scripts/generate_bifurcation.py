@@ -106,7 +106,7 @@ def run_single_bifurcation_sim(
     prey_counts = []
     predator_counts = []
     for _ in range(measurement_steps):
-        model.run(1)
+        model.update()
         prey_counts.append(np.sum(model.grid == 1))
         predator_counts.append(np.sum(model.grid == 2))
     
