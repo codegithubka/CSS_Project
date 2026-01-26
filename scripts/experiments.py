@@ -193,9 +193,6 @@ def run_single_simulation(
     for _ in range(warmup_steps):
         model.update()
         
-    if with_evolution:
-        model._evolution_stopped = True
-        
     # Measurement phase: start collecting our mertics
     prey_pops, pred_pops = [], [] # Prey populations and predator populations
     evolved_means, evolved_stds = [], [] # Evolution stats over time
@@ -513,7 +510,6 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
 def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """
     Phase 4: Sensitivity analysis.
-    
     - Vary predator_birth and predator_death
     - For each combo, sweep prey_death
     
