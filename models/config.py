@@ -70,7 +70,7 @@ class Config:
     densities: Tuple[float, float] = (0.30, 0.15)  # (prey, predator)  #FIXME: Default densities
     
     # For FSS experiments: multiple grid sizes
-    grid_sizes: Tuple[int, ...] = (100, 200, 500, 1000)
+    grid_sizes: Tuple[int, ...] = (50, 100, 250, 500, 1000, 2500)
     
     # Default/fixed parameters
     prey_birth: float = 0.2
@@ -193,7 +193,7 @@ PHASE1_CONFIG = Config(
     grid_size=1000,
     n_prey_death=20,
     prey_birth=0.2,
-    prey_death_range=(0.0, 0.20),
+    prey_death_range=(0.09, 0.12),
     predator_birth=0.8,    
     predator_death=0.05,    
     n_replicates=30,
@@ -209,9 +209,9 @@ PHASE1_CONFIG = Config(
 PHASE2_CONFIG = Config(
     grid_size=1000,
     n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
-    n_replicates=30,
+    n_replicates=20,
     warmup_steps=1000,           # Shorter warmup (evolution starts immediately)
-    measurement_steps=3000,     # Longer measurement to see convergence
+    measurement_steps=5000,     # Longer measurement to see convergence
     
     # Evolution settings
     with_evolution=True,
@@ -220,8 +220,7 @@ PHASE2_CONFIG = Config(
     evolve_max=0.20,            # Allow full range
     
     collect_pcf=False,
-    save_timeseries=True,
-    timeseries_subsample=10,    # Track evolution trajectory
+    save_timeseries=False,    # Track evolution trajectory
 )
 
 # Phase 3: Finite-size scaling at critical point

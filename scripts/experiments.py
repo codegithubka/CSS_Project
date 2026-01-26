@@ -188,10 +188,14 @@ def run_single_simulation(
     warmup_steps = cfg.get_warmup_steps(grid_size)
     measurement_steps = cfg.get_measurement_steps(grid_size)
     
-    
     # Warmup phase
     for _ in range(warmup_steps):
         model.update()
+        
+        
+    # FIXME: Remove the two lines below after phase 2.
+    if with_evolution:
+        model._evolution_stopped = True
         
     # Measurement phase: start collecting our mertics
     prey_pops, pred_pops = [], [] # Prey populations and predator populations
@@ -215,10 +219,7 @@ def run_single_simulation(
         if with_evolution:
             stats = get_evolved_stats(model, "prey_death")
             evolved_means.append(stats["mean"])
-            evolved_stds.append(stats["std"])
-        
-         
-                
+            evolved_stds.append(stats["std"])  
                 
     # Compile results
     result = {
@@ -406,6 +407,7 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
                 cfg,
                 True                  # with_evolution=True
             ))
+            
     
     logger.info(f"Phase 2: {len(jobs):,} simulations")
     logger.info(f"  Initial prey_death values: {initial_prey_deaths.tolist()}")
