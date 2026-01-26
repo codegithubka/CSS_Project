@@ -1,0 +1,18 @@
+{
+  "phase": 3,
+  "description": "Finite-size scaling",
+  "critical_point": {
+    "prey_birth": 0.2,
+    "prey_death": 0.0963
+  },
+  "grid_sizes": [
+    50,
+    100,
+    250,
+    500,
+    1000,
+    2500
+  ],
+  "n_sims": 120,
+  "timestamp": "2026-01-26 17:14:44"
+}

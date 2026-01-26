@@ -466,7 +466,6 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     for L in cfg.grid_sizes:
         warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
-
     
     jobs = []
     for L in cfg.grid_sizes: # Sweep through grid sizes

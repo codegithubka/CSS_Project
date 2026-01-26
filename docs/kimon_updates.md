@@ -285,3 +285,13 @@ Refactored ```experiments.py``` according to ```experiments.md```. Phase 4 and P
 - Phase 6: Will implement if all the other phases pass successfully.
 
 TODO: We need to start drafting a proper version of the analyis (```analysis.py```) for postprocessing of all the data we are currenlty collecting and plotting utilities to visualize them.
+
+
+## Updates (26/1)
+
+Under ```hpc_data``` folder you can find:
+
+- ```../hpc_data/phase1_18677015```
+- ```../hpc_data/phase1.5_18682575``` (finer grid but ow same as phase 1)
+- ```../hpc_data/phase2_18693004```
+- ```../hpc_data/phase3_18698382```

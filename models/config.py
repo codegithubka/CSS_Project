@@ -238,14 +238,14 @@ PHASE3_CONFIG = Config(
 
 # Phase 4: Sensitivity analysis
 PHASE4_CONFIG = Config(
-    grid_size=100,
+    grid_size=250,
     predator_birth_values=(0.15, 0.20, 0.25, 0.30),
     predator_death_values=(0.05, 0.10, 0.15, 0.20),
     n_prey_death=10,
     prey_death_range=(0.01, 0.10),
-    n_replicates=20,
-    warmup_steps=200,
-    measurement_steps=1000,
+    n_replicates=10,
+    warmup_steps=500,
+    measurement_steps=500,
     with_evolution=False,
     collect_pcf=False,
     save_timeseries=True,
