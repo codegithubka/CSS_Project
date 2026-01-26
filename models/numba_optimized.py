@@ -56,6 +56,65 @@ def set_numba_seed(seed: int) -> None:
 # ============================================================================
 # PREDATOR-PREY KERNELS
 # ============================================================================
+@njit(cache=True)
+def _pp_async_kernel_fast(
+    grid: np.ndarray,
+    prey_death_arr: np.ndarray,
+    p_birth_val: float,
+    p_death_val: float,
+    pred_birth_val: float,
+    pred_death_val: float,
+    dr_arr: np.ndarray,
+    dc_arr: np.ndarray,
+    evolve_sd: float,
+    evolve_min: float,
+    evolve_max: float,
+    evolution_stopped: bool,
+    occupied_buffer: np.ndarray,
+) -> np.ndarray:
+    """Partially synchronous predator-prey update kernel."""
+    rows, cols = grid.shape
+    n_shifts = len(dr_arr)
+    grid_copy = grid.copy()
+    prey_death_arr_copy = prey_death_arr.copy()
+
+    prey_death = np.random.random(size=grid.shape)
+    grid_copy[(grid == 1) & (prey_death < prey_death_arr)] = 0
+    prey_death_arr_copy[(grid == 1) & (prey_death < prey_death_arr)] = np.nan
+
+    pred_death = np.random.random(size=grid.shape)
+    grid_copy[(grid == 2) & (pred_death < pred_death_val)] = 0
+
+    count = np.count_nonzero(grid)
+    indices = np.random.permutation(count)
+    rs = indices // cols
+    cs = indices % cols
+
+    nb = np.random.randint(0, n_shifts, size=count)
+    nrs = (rs + dr_arr[nb]) % rows
+    ncs = (cs + dc_arr[nb]) % cols
+
+    for r, c, nr, nc in zip(rs, cs, nrs, ncs):
+        state = grid[r, c]
+        nstate = grid[nr, nc]
+
+        if state == 1 and nstate == 0 and np.random.random() < p_birth_val:
+            grid_copy[nr, nc] = 1
+            parent_val = prey_death_arr[r, c]
+            if not evolution_stopped:
+                child_val = parent_val + np.random.normal(0, evolve_sd)
+                prey_death_arr_copy[nr, nc] = np.clip(child_val, evolve_min, evolve_max)
+            else:
+                prey_death_arr_copy[nr, nc] = parent_val
+
+        elif state == 2 and nstate == 1 and np.random.random() < pred_birth_val:
+            grid_copy[nr, nc] = 2
+            prey_death_arr_copy[nr, nc] = np.nan
+
+    grid = grid_copy
+    prey_death_arr = prey_death_arr_copy
+
+    return grid
 
 @njit(cache=True)
 def _pp_async_kernel_random(
