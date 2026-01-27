@@ -262,8 +262,22 @@ PHASE5_CONFIG = Config(
     timeseries_subsample=1,  # Full resolution for autocorrelation
 )
 
-# Phase 6: Model extensions
-PHASE6_CONFIG = Config() #FIXME: Will be defined later
+# Phase 6: Model extensions (directed hunting); same config as phase 1 but with directed hunting
+PHASE6_CONFIG = Config(
+    grid_size=1000,
+    n_prey_death=20,
+    prey_birth=0.2,
+    prey_death_range=(0.09, 0.12),
+    predator_birth=0.8,    
+    predator_death=0.05,    
+    n_replicates=30,
+    warmup_steps=1000,
+    measurement_steps=1000,
+    collect_pcf=True,
+    pcf_sample_rate=0.2,
+    save_timeseries=False,
+    directed_hunting=True,
+)
 
 PHASE_CONFIGS = {
     1: PHASE1_CONFIG,

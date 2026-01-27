@@ -652,8 +652,47 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     - Compare directed vs random hunting
     - Check if Hydra effect and SOC persist
     """
-    pass
+    from joblib import Parallel, delayed
+    
+    warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
+    
+    prey_deaths = cfg.get_prey_deaths()
+    jobs = []
+    for pd in prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pd": pd}
+            seed = generate_unique_seed(params, rep)
+            jobs.append((cfg.prey_birth, pd, cfg.predator_birth, cfg.predator_death, 
+                        cfg.grid_size, seed, cfg, False))
+            
+    logger.info(f"Phase 6: {len(jobs):,} simulations (directed hunting)")
+    logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
 
+    output_jsonl = output_dir / "phase1_results.jsonl"
+    all_results = []
+    
+    with open(output_jsonl, "w", encoding="utf-8") as f:
+        executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
+        tasks = (delayed(run_single_simulation)(*job) for job in jobs)
+        
+        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 6"):
+            f.write(json.dumps(result, default=str) + "\n")
+            f.flush()
+            all_results.append(result)
+    
+    # Save metadata
+    meta = {
+        "phase": 6,
+        "description": "Parameter sweep for critical point with directed hunting",
+        "n_sims": len(all_results),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "config": asdict(cfg),
+    }
+    with open(output_dir / "phase6_metadata.json", "w") as f:
+        json.dump(meta, f, indent=2, default=str)
+    
+    logger.info(f"Phase 6 complete. Results: {output_jsonl}")
+    return all_results
 # =============================================================================
 # Main:
 # =============================================================================

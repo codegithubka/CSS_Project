@@ -35,7 +35,6 @@ echo "CPUs:       $SLURM_CPUS_PER_TASK"
 echo "Start:      $(date)"
 echo "Working dir: $(pwd)"
 echo "========================================"
-x
 # -----------------------------------------------------------------------------
 # Environment Setup
 # -----------------------------------------------------------------------------
@@ -94,4 +93,3 @@ echo "  2. Analyze cluster size distributions P(s) for each grid size"
 echo "  3. Fit power-law exponent tau from P(s) ~ s^(-tau)"
 echo "  4. Check finite-size cutoff s_max ~ L^D (fractal dimension)"
 echo "========================================"
-EOF
