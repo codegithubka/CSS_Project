@@ -32,7 +32,7 @@ These phases should be completed sequentially, deepening our understanding at ea
 	- Look for critical slowing down: perturbations to states closer to the critical point should more slowly return to the steady state
 	- This requires time series data
 ### Phase 6: model extensions
-- Investigate whether hydra effect and SOC still occur with diffusion and directed movement
+- Investigate whether hydra effect and SOC still occur with diffusion and directed reproduction
 
 # Todo
 The main functionality is all complete. Thus, the models folder should be relatively untouched.
