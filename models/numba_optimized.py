@@ -207,7 +207,7 @@ def _pp_async_kernel_directed(
     evolution_stopped: bool,
     occupied_buffer: np.ndarray,
 ) -> np.ndarray:
-    """Async predator-prey update kernel with directed hunting."""
+    """Async predator-prey update kernel with directed reproduction."""
     rows, cols = grid.shape
     n_shifts = len(dr_arr)
     
@@ -229,19 +229,22 @@ def _pp_async_kernel_directed(
         c = occupied_buffer[i, 1]
         
         state = grid[r, c]
-        if state == 0:
-            continue
 
         if state == 1:  # PREY
-            nbi = np.random.randint(0, n_shifts)
-            nr = (r + dr_arr[nbi]) % rows
-            nc = (c + dc_arr[nbi]) % cols
-            
             if np.random.random() < prey_death_arr[r, c]:
                 grid[r, c] = 0
                 prey_death_arr[r, c] = np.nan
-            elif grid[nr, nc] == 0:
-                if np.random.random() < p_birth_val:
+            elif np.random.random() < p_birth_val:
+                valid = []
+                for k in range(n_shifts):
+                    nr = (r + dr_arr[k]) % rows
+                    nc = (c + dc_arr[k]) % cols
+                    if grid[nr, nc] == 0:
+                        valid.append(k)
+                if len(valid) > 0:
+                    choice = np.random.choice(valid)
+                    nr = (r + dr_arr[choice]) % rows
+                    nc = (c + dc_arr[choice]) % cols
                     grid[nr, nc] = 1
                     parent_val = prey_death_arr[r, c]
                     if not evolution_stopped:
@@ -254,44 +257,22 @@ def _pp_async_kernel_directed(
                     else:
                         prey_death_arr[nr, nc] = parent_val
 
-        elif state == 2:  # PREDATOR - directed hunting
+        elif state == 2:  # PREDATOR
             if np.random.random() < pred_death_val:
                 grid[r, c] = 0
-                continue
-            
-            prey_count = 0
-            for k in range(n_shifts):
-                check_r = (r + dr_arr[k]) % rows
-                check_c = (c + dc_arr[k]) % cols
-                if grid[check_r, check_c] == 1:
-                    prey_count += 1
-            
-            if prey_count > 0:
-                target_idx = np.random.randint(0, prey_count)
-                found = 0
-                nr, nc = 0, 0
+            elif np.random.random() < pred_birth_val:
+                valid = []
                 for k in range(n_shifts):
-                    check_r = (r + dr_arr[k]) % rows
-                    check_c = (c + dc_arr[k]) % cols
-                    if grid[check_r, check_c] == 1:
-                        if found == target_idx:
-                            nr = check_r
-                            nc = check_c
-                            break
-                        found += 1
-                
-                if np.random.random() < pred_birth_val:
+                    nr = (r + dr_arr[k]) % rows
+                    nc = (c + dc_arr[k]) % cols
+                    if grid[nr, nc] == 1:
+                        valid.append(k)
+                if len(valid) > 0:
+                    choice = np.random.choice(valid)
+                    nr = (r + dr_arr[choice]) % rows
+                    nc = (c + dc_arr[choice]) % cols
                     grid[nr, nc] = 2
                     prey_death_arr[nr, nc] = np.nan
-            else:
-                nbi = np.random.randint(0, n_shifts)
-                nr = (r + dr_arr[nbi]) % rows
-                nc = (c + dc_arr[nbi]) % cols
-                
-                if grid[nr, nc] == 1:
-                    if np.random.random() < pred_birth_val:
-                        grid[nr, nc] = 2
-                        prey_death_arr[nr, nc] = np.nan
 
     return grid
 
