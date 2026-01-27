@@ -246,6 +246,7 @@ PHASE4_CONFIG = Config(
     collect_pcf=False,
     save_timeseries=True,
     timeseries_subsample=10,
+    directed_hunting=False,
 )
 
 
