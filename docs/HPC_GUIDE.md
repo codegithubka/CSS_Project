@@ -39,7 +39,7 @@ scancel <JOBID>
 
 # Monitoring live progress
 
-tail -f logs_18702594.err
+tail -f pp_phase4_18735304.err
 
 # Watch task completetion
 
@@ -48,7 +48,7 @@ watch -n 10 "ls -1 results_JOBID  | wc -l"
 
 # Fetching the results once the job is done
 
-scp -r kanagnostopoul@snellius.surf.nl:~/CSS_Project/results/phase3_18698382/ ./results/
+scp -r kanagnostopoul@snellius.surf.nl:~/CSS_Project/results/phase3_18743295/ ./results/
 ```
 
 The jobscript template can be found in ```run_analysis.sh``` (default rome paritition).

@@ -668,7 +668,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     logger.info(f"Phase 6: {len(jobs):,} simulations (directed hunting)")
     logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
 
-    output_jsonl = output_dir / "phase1_results.jsonl"
+    output_jsonl = output_dir / "phase6_results.jsonl"
     all_results = []
     
     with open(output_jsonl, "w", encoding="utf-8") as f:

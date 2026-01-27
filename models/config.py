@@ -80,7 +80,7 @@ class Config:
     
     # Critical point (UPDATE AFTER PHASE 1)
     critical_prey_birth: float = 0.20 
-    critical_prey_death: float = 0.0963 
+    critical_prey_death: float = 0.963
     
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
@@ -192,7 +192,7 @@ PHASE1_CONFIG = Config(
     grid_size=1000,
     n_prey_death=20,
     prey_birth=0.2,
-    prey_death_range=(0.09, 0.12),
+    prey_death_range=(0.00, 0.2),
     predator_birth=0.8,    
     predator_death=0.05,    
     n_replicates=30,
@@ -224,13 +224,14 @@ PHASE2_CONFIG = Config(
 
 # Phase 3: Finite-size scaling at critical point
 PHASE3_CONFIG = Config(
-    grid_sizes=(50, 100, 250, 500, 1000),
+    grid_sizes=(50, 100, 250, 500, 1000, 2500),
     n_replicates=20,
     warmup_steps=1000,
     measurement_steps=1000,
     critical_prey_birth=0.20,      # Add explicitly
-    critical_prey_death=0.0963,    # Add explicitly - verify from Phase 1!
-    collect_pcf=False,
+    critical_prey_death=0.116,    # Add explicitly - verify from Phase 1!
+    collect_pcf=True,
+    pcf_sample_rate=1.0,
     save_timeseries=False,
     with_evolution=False,
     directed_hunting=False,
@@ -264,11 +265,11 @@ PHASE5_CONFIG = Config(
 )
 
 # Phase 6: Model extensions (directed hunting); same config as phase 1 but with directed hunting
-PHASE6_CONFIG = Config(
-    grid_size=1000,
+PHASE6_CONFIG = Config( 
+    grid_size=1000, #FIXME: Verify config before running.
     n_prey_death=20,
     prey_birth=0.2,
-    prey_death_range=(0.09, 0.12),
+    prey_death_range=(0.0, 0.2),
     predator_birth=0.8,    
     predator_death=0.05,    
     n_replicates=30,
