@@ -646,29 +646,36 @@ def run_phase5(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     return all_results
 
 
-
-def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
+def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """
-    Phase 4: Global Sensitivity Analysis.
+    Phase 6: Model Extensions - Directed Hunting Comparison.
+    
+    Same 4D sweep as Phase 4, but with directed_hunting=True.
     Vary: prey_birth, prey_death, predator_birth, predator_death
     Range: 0-1 (11 values each)
     Reps: 10
     Grid size: 250
+    
+    Compare results with Phase 4 to assess impact of directed hunting on:
+    - Critical point location
+    - Hydra effect persistence
+    - SOC signatures
     """
     from joblib import Parallel, delayed
     import itertools
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    # Define the global sweep values
+    # Define the global sweep values (same as Phase 4)
     sweep_values = np.linspace(0.0, 1.0, 11)
     
     # Logging
-    logger.info(f"Phase 4: Full 4D Parameter Sweep")
+    logger.info(f"Phase 6: Full 4D Parameter Sweep (Directed Hunting)")
     logger.info(f"  Parameters: prey_birth, prey_death, pred_birth, pred_death")
     logger.info(f"  Range: 0.0 to 1.0 (11 steps)")
     logger.info(f"  Grid Size: {cfg.grid_size}")
     logger.info(f"  Replicates: {cfg.n_replicates}")
+    logger.info(f"  Directed Hunting: {cfg.directed_hunting}")
     
     param_grid = itertools.product(sweep_values, repeat=4)
     
@@ -677,11 +684,13 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     for pb, pd, pred_b, pred_d in param_grid:
         for rep in range(cfg.n_replicates):
             # Create params dict for unique seed generation
+            # Include phase identifier to ensure different seeds from Phase 4
             params_id = {
                 "pb": pb, 
                 "pd": pd, 
                 "pred_b": pred_b, 
                 "pred_d": pred_d, 
+                "phase": 6,
                 "rep": rep
             }
             seed = generate_unique_seed(params_id, rep)
@@ -700,7 +709,8 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
             ))
     
     logger.info(f"  Total simulations: {len(jobs):,}")
-    output_jsonl = output_dir / "phase4_results.jsonl"
+    
+    output_jsonl = output_dir / "phase6_results.jsonl"
     all_results = []
     
     with open(output_jsonl, "w", encoding="utf-8") as f:
@@ -708,26 +718,28 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
         tasks = (delayed(run_single_simulation)(*job) for job in jobs)
         
         # tqdm shows progress for the massive job list
-        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 4 (4D Sweep)"):
+        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 6 (4D Sweep + Directed)"):
             f.write(json.dumps(result, default=str) + "\n")
             f.flush()
             all_results.append(result)
     
-    # 4. Save Metadata
+    # Save Metadata
     meta = {
-        "phase": 4,
-        "description": "Global 4D Sensitivity Analysis",
+        "phase": 6,
+        "description": "Global 4D Sensitivity Analysis with Directed Hunting",
         "sweep_values": sweep_values.tolist(),
         "parameters_varied": ["prey_birth", "prey_death", "predator_birth", "predator_death"],
+        "directed_hunting": cfg.directed_hunting,
         "n_sims": len(all_results),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "config": asdict(cfg),
     }
-    with open(output_dir / "phase4_metadata.json", "w") as f:
+    with open(output_dir / "phase6_metadata.json", "w") as f:
         json.dump(meta, f, indent=2, default=str)
     
-    logger.info(f"Phase 4 complete. Results: {output_jsonl}")
+    logger.info(f"Phase 6 complete. Results: {output_jsonl}")
     return all_results
+
 # =============================================================================
 # Main:
 # =============================================================================
