@@ -79,13 +79,13 @@ class Config:
     predator_death: float = 0.05 # FIXME: Default predator death rate
     
     # Critical point (UPDATE AFTER PHASE 1)
-    critical_prey_birth: float = 0.22 # FIXME: Change after obtaining results
-    critical_prey_death: float = 0.04 # FIXME; Change after obtaining results
+    critical_prey_birth: float = 0.20 
+    critical_prey_death: float = 0.0963 
     
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
     n_prey_birth: int = 15   # FIXME: Decide number of grid points along prey axes
-    n_prey_death: int = 20
+    n_prey_death: int = 5
     
     # Predator parameter sweep (Phase 4 sensitivity)
     predator_birth_values: Tuple[float, ...] = (0.15, 0.20, 0.25, 0.30) #FIXME: Bogus values for now
@@ -112,7 +112,7 @@ class Config:
     
     # Update mode
     synchronous: bool = False  # Always False for this model
-    directed_hunting: bool = True
+    directed_hunting: bool = False
     
     # For Phase 6: compare model variants
     directed_hunting_values: Tuple[bool, ...] = (False, True)
@@ -208,7 +208,7 @@ PHASE1_CONFIG = Config(
 PHASE2_CONFIG = Config(
     grid_size=1000,
     n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
-    n_replicates=20,
+    n_replicates=10,
     warmup_steps=1000,           # Shorter warmup (evolution starts immediately)
     measurement_steps=5000,     # Longer measurement to see convergence
     
@@ -224,29 +224,31 @@ PHASE2_CONFIG = Config(
 
 # Phase 3: Finite-size scaling at critical point
 PHASE3_CONFIG = Config(
-    grid_sizes=(50, 75, 100, 150, 200),
-    n_replicates=50,
-    warmup_steps=200,
-    measurement_steps=300,
+    grid_sizes=(50, 100, 250, 500, 1000),
+    n_replicates=20,
+    warmup_steps=1000,
+    measurement_steps=1000,
+    critical_prey_birth=0.20,      # Add explicitly
+    critical_prey_death=0.0963,    # Add explicitly - verify from Phase 1!
     collect_pcf=False,
     save_timeseries=False,
+    with_evolution=False,
+    directed_hunting=False,
 )
 
 # Phase 4: Sensitivity analysis
 PHASE4_CONFIG = Config(
-    grid_size=100,
-    predator_birth_values=(0.15, 0.20, 0.25, 0.30),
-    predator_death_values=(0.05, 0.10, 0.15, 0.20),
-    n_prey_death=10,
-    prey_death_range=(0.01, 0.10),
-    n_replicates=20,
-    warmup_steps=200,
-    measurement_steps=1000,
-    with_evolution=True,
+    grid_size=250,          # As requested
+    n_replicates=10,        # As requested
+    warmup_steps=500,       # As requested
+    measurement_steps=500,  # As requested
+    with_evolution=False,
     collect_pcf=False,
     save_timeseries=True,
     timeseries_subsample=10,
+    directed_hunting=False,
 )
+
 
 # Phase 5: Perturbation analysis (critical slowing down)
 PHASE5_CONFIG = Config(
@@ -261,8 +263,22 @@ PHASE5_CONFIG = Config(
     timeseries_subsample=1,  # Full resolution for autocorrelation
 )
 
-# Phase 6: Model extensions
-PHASE6_CONFIG = Config() #FIXME: Will be defined later
+# Phase 6: Model extensions (directed hunting); same config as phase 1 but with directed hunting
+PHASE6_CONFIG = Config(
+    grid_size=1000,
+    n_prey_death=20,
+    prey_birth=0.2,
+    prey_death_range=(0.09, 0.12),
+    predator_birth=0.8,    
+    predator_death=0.05,    
+    n_replicates=30,
+    warmup_steps=1000,
+    measurement_steps=1000,
+    collect_pcf=True,
+    pcf_sample_rate=0.2,
+    save_timeseries=False,
+    directed_hunting=True,
+)
 
 PHASE_CONFIGS = {
     1: PHASE1_CONFIG,

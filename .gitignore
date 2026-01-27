@@ -11,3 +11,5 @@ results/
 # Data files
 data/
 .pytest_cache/
+
+.DS_Store

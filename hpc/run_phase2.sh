@@ -5,9 +5,9 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --time=04:00:00
-#SBATCH --mem=16G
-#SBATCH --output=pp_phase2_%j.out
-#SBATCH --error=pp_phase2_%j.err
+#SBATCH --mem=64G
+#SBATCH --output=/home/kanagnostopoul/CSS_Project/pp_phase2_%j.out
+#SBATCH --error=/home/kanagnostopoul/CSS_Project/pp_phase2_%j.err
 
 # =============================================================================
 # PP Hydra Effect - Phase 2: Self-Organization (SOC Test)
