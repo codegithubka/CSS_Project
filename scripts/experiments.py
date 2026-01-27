@@ -646,52 +646,87 @@ def run_phase5(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     return all_results
 
 
-def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
+
+def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """
-    Phase 6: Model extensions.
-    - Compare directed vs random hunting
-    - Check if Hydra effect and SOC persist
+    Phase 4: Global Sensitivity Analysis.
+    Vary: prey_birth, prey_death, predator_birth, predator_death
+    Range: 0-1 (11 values each)
+    Reps: 10
+    Grid size: 250
     """
     from joblib import Parallel, delayed
+    import itertools
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    prey_deaths = cfg.get_prey_deaths()
+    # Define the global sweep values
+    sweep_values = np.linspace(0.0, 1.0, 11)
+    
+    # Logging
+    logger.info(f"Phase 4: Full 4D Parameter Sweep")
+    logger.info(f"  Parameters: prey_birth, prey_death, pred_birth, pred_death")
+    logger.info(f"  Range: 0.0 to 1.0 (11 steps)")
+    logger.info(f"  Grid Size: {cfg.grid_size}")
+    logger.info(f"  Replicates: {cfg.n_replicates}")
+    
+    param_grid = itertools.product(sweep_values, repeat=4)
+    
     jobs = []
-    for pd in prey_deaths:
+    
+    for pb, pd, pred_b, pred_d in param_grid:
         for rep in range(cfg.n_replicates):
-            params = {"pd": pd}
-            seed = generate_unique_seed(params, rep)
-            jobs.append((cfg.prey_birth, pd, cfg.predator_birth, cfg.predator_death, 
-                        cfg.grid_size, seed, cfg, False))
+            # Create params dict for unique seed generation
+            params_id = {
+                "pb": pb, 
+                "pd": pd, 
+                "pred_b": pred_b, 
+                "pred_d": pred_d, 
+                "rep": rep
+            }
+            seed = generate_unique_seed(params_id, rep)
             
-    logger.info(f"Phase 6: {len(jobs):,} simulations (directed hunting)")
-    logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
-
-    output_jsonl = output_dir / "phase6_results.jsonl"
+            # Job Signature: 
+            # (prey_birth, prey_death, predator_birth, predator_death, grid_size, seed, cfg, with_evolution)
+            jobs.append((
+                pb, 
+                pd, 
+                pred_b, 
+                pred_d,
+                cfg.grid_size, 
+                seed, 
+                cfg, 
+                False 
+            ))
+    
+    logger.info(f"  Total simulations: {len(jobs):,}")
+    output_jsonl = output_dir / "phase4_results.jsonl"
     all_results = []
     
     with open(output_jsonl, "w", encoding="utf-8") as f:
         executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
         tasks = (delayed(run_single_simulation)(*job) for job in jobs)
         
-        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 6"):
+        # tqdm shows progress for the massive job list
+        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 4 (4D Sweep)"):
             f.write(json.dumps(result, default=str) + "\n")
             f.flush()
             all_results.append(result)
     
-    # Save metadata
+    # 4. Save Metadata
     meta = {
-        "phase": 6,
-        "description": "Parameter sweep for critical point with directed hunting",
+        "phase": 4,
+        "description": "Global 4D Sensitivity Analysis",
+        "sweep_values": sweep_values.tolist(),
+        "parameters_varied": ["prey_birth", "prey_death", "predator_birth", "predator_death"],
         "n_sims": len(all_results),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "config": asdict(cfg),
     }
-    with open(output_dir / "phase6_metadata.json", "w") as f:
+    with open(output_dir / "phase4_metadata.json", "w") as f:
         json.dump(meta, f, indent=2, default=str)
     
-    logger.info(f"Phase 6 complete. Results: {output_jsonl}")
+    logger.info(f"Phase 4 complete. Results: {output_jsonl}")
     return all_results
 # =============================================================================
 # Main:
