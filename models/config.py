@@ -80,7 +80,7 @@ class Config:
     
     # Critical point (UPDATE AFTER PHASE 1)
     critical_prey_birth: float = 0.20 
-    critical_prey_death: float = 0.963
+    critical_prey_death: float = 0.947
     
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
@@ -229,7 +229,7 @@ PHASE3_CONFIG = Config(
     warmup_steps=1000,
     measurement_steps=1000,
     critical_prey_birth=0.20,      # Add explicitly
-    critical_prey_death=0.116,    # Add explicitly - verify from Phase 1!
+    critical_prey_death=0.947,    # Add explicitly - verify from Phase 1!
     collect_pcf=True,
     pcf_sample_rate=1.0,
     save_timeseries=False,

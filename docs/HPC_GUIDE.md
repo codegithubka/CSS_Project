@@ -48,7 +48,7 @@ watch -n 10 "ls -1 results_JOBID  | wc -l"
 
 # Fetching the results once the job is done
 
-scp -r kanagnostopoul@snellius.surf.nl:~/CSS_Project/results/phase3_18743295/ ./results/
+scp -r kanagnostopoul@snellius.surf.nl:~/CSS_Project/results/phase3_18744380/ ./results/
 ```
 
 The jobscript template can be found in ```run_analysis.sh``` (default rome paritition).
