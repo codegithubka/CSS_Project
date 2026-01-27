@@ -193,9 +193,6 @@ def run_single_simulation(
     for _ in range(warmup_steps):
         model.update()
         
-    if with_evolution:
-        model._evolution_stopped = True
-        
     # Measurement phase: start collecting our mertics
     prey_pops, pred_pops = [], [] # Prey populations and predator populations
     evolved_means, evolved_stds = [], [] # Evolution stats over time
@@ -409,22 +406,20 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
     # Test at multiple prey_birth values
-    prey_births = cfg.get_prey_births()
-    
+    pb = 0.2
     # Vary intial prey_death
-    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], 20)
+    initial_prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], cfg.n_prey_death)
     
     jobs = []
-    for pb in prey_births:
-        for initial_pd in initial_prey_deaths:
-            for rep in range(cfg.n_replicates):
-                params = {"pb": pb, "initial_pd": initial_pd, "phase": 2}
-                seed = generate_unique_seed(params, rep)
-                jobs.append((pb, initial_pd, cfg.predator_birth, cfg.predator_death,
-                            cfg.grid_size, seed, cfg, True))
+    for initial_pd in initial_prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pb": pb, "initial_pd": initial_pd, "phase": 2}
+            seed = generate_unique_seed(params, rep)
+            jobs.append((pb, initial_pd, cfg.predator_birth, cfg.predator_death,
+                        cfg.grid_size, seed, cfg, True))
     
     logger.info(f"Phase 2: {len(jobs):,} simulations")
-    logger.info(f"  prey_birth values: {len(prey_births)}")
+    logger.info(f"  prey_birth value: {pb}")
     logger.info(f"  initial prey_death values: {len(initial_prey_deaths)}")
     logger.info(f"  Replicates: {cfg.n_replicates}")
     
@@ -469,10 +464,11 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     
     logger.info(f"Phase 3: FSS at critical point (pb={pb}, pd={pd})")
     
+    for L in cfg.grid_sizes:
+        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
+    
     jobs = []
     for L in cfg.grid_sizes: # Sweep through grid sizes
-        warmup_numba_kernels(L, directed_hunting=cfg.directed_hunting)
-        
         for rep in range(cfg.n_replicates):
             params = {"L": L, "phase": 3}
             seed = generate_unique_seed(params, rep)
@@ -512,42 +508,57 @@ def run_phase3(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
 
 def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """
-    Phase 4: Sensitivity analysis.
-    
-    - Vary predator_birth and predator_death
-    - For each combo, sweep prey_death
-    
-    
-    NOTE: This phase should be subjected to changes depeding on what we are interested in varying
-    in terms of parameters.
+    Phase 4: Global Sensitivity Analysis.
+    Vary: prey_birth, prey_death, predator_birth, predator_death
+    Range: 0-1 (11 values each)
+    Reps: 10
+    Grid size: 250
     """
     from joblib import Parallel, delayed
+    import itertools
     
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
-    prey_deaths = np.linspace(cfg.prey_death_range[0], cfg.prey_death_range[1], cfg.n_prey_death)
+    # Define the global sweep values
+    sweep_values = np.linspace(0.0, 1.0, 11)
+    
+    # Logging
+    logger.info(f"Phase 4: Full 4D Parameter Sweep")
+    logger.info(f"  Parameters: prey_birth, prey_death, pred_birth, pred_death")
+    logger.info(f"  Range: 0.0 to 1.0 (11 steps)")
+    logger.info(f"  Grid Size: {cfg.grid_size}")
+    logger.info(f"  Replicates: {cfg.n_replicates}")
+    
+    param_grid = itertools.product(sweep_values, repeat=4)
     
     jobs = []
-    for pred_b in cfg.predator_birth_values:
-        for pred_d in cfg.predator_death_values:
-            for pd in prey_deaths:
-                for rep in range(cfg.n_replicates):
-                    params = {"pred_b": pred_b, "pred_d": pred_d, "pd": pd}
-                    
-                    # Non-evolution
-                    seed = generate_unique_seed(params, rep)
-                    jobs.append((cfg.prey_birth, pd, pred_b, pred_d,
-                                cfg.grid_size, seed, cfg, False))
-                    
-                    # Evolution
-                    evo_seed = generate_unique_seed(params, rep + 1_000_000)
-                    jobs.append((cfg.prey_birth, pd, pred_b, pred_d,
-                                cfg.grid_size, evo_seed, cfg, True))
     
-    logger.info(f"Phase 4: {len(jobs):,} simulations")
-    logger.info(f"  predator_birth: {cfg.predator_birth_values}")
-    logger.info(f"  predator_death: {cfg.predator_death_values}")
+    for pb, pd, pred_b, pred_d in param_grid:
+        for rep in range(cfg.n_replicates):
+            # Create params dict for unique seed generation
+            params_id = {
+                "pb": pb, 
+                "pd": pd, 
+                "pred_b": pred_b, 
+                "pred_d": pred_d, 
+                "rep": rep
+            }
+            seed = generate_unique_seed(params_id, rep)
+            
+            # Job Signature: 
+            # (prey_birth, prey_death, predator_birth, predator_death, grid_size, seed, cfg, with_evolution)
+            jobs.append((
+                pb, 
+                pd, 
+                pred_b, 
+                pred_d,
+                cfg.grid_size, 
+                seed, 
+                cfg, 
+                False 
+            ))
     
+    logger.info(f"  Total simulations: {len(jobs):,}")
     output_jsonl = output_dir / "phase4_results.jsonl"
     all_results = []
     
@@ -555,18 +566,21 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
         executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
         tasks = (delayed(run_single_simulation)(*job) for job in jobs)
         
-        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 4"):
+        # tqdm shows progress for the massive job list
+        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 4 (4D Sweep)"):
             f.write(json.dumps(result, default=str) + "\n")
             f.flush()
             all_results.append(result)
     
+    # 4. Save Metadata
     meta = {
         "phase": 4,
-        "description": "Sensitivity analysis",
-        "predator_birth_values": list(cfg.predator_birth_values),
-        "predator_death_values": list(cfg.predator_death_values),
+        "description": "Global 4D Sensitivity Analysis",
+        "sweep_values": sweep_values.tolist(),
+        "parameters_varied": ["prey_birth", "prey_death", "predator_birth", "predator_death"],
         "n_sims": len(all_results),
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "config": asdict(cfg),
     }
     with open(output_dir / "phase4_metadata.json", "w") as f:
         json.dump(meta, f, indent=2, default=str)
@@ -638,8 +652,47 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     - Compare directed vs random hunting
     - Check if Hydra effect and SOC persist
     """
-    pass
+    from joblib import Parallel, delayed
+    
+    warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
+    
+    prey_deaths = cfg.get_prey_deaths()
+    jobs = []
+    for pd in prey_deaths:
+        for rep in range(cfg.n_replicates):
+            params = {"pd": pd}
+            seed = generate_unique_seed(params, rep)
+            jobs.append((cfg.prey_birth, pd, cfg.predator_birth, cfg.predator_death, 
+                        cfg.grid_size, seed, cfg, False))
+            
+    logger.info(f"Phase 6: {len(jobs):,} simulations (directed hunting)")
+    logger.info(f"  Grid: {cfg.n_prey_death} prey_death values × {cfg.n_replicates} reps (prey_birth={cfg.prey_birth})")
 
+    output_jsonl = output_dir / "phase1_results.jsonl"
+    all_results = []
+    
+    with open(output_jsonl, "w", encoding="utf-8") as f:
+        executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
+        tasks = (delayed(run_single_simulation)(*job) for job in jobs)
+        
+        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 6"):
+            f.write(json.dumps(result, default=str) + "\n")
+            f.flush()
+            all_results.append(result)
+    
+    # Save metadata
+    meta = {
+        "phase": 6,
+        "description": "Parameter sweep for critical point with directed hunting",
+        "n_sims": len(all_results),
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "config": asdict(cfg),
+    }
+    with open(output_dir / "phase6_metadata.json", "w") as f:
+        json.dump(meta, f, indent=2, default=str)
+    
+    logger.info(f"Phase 6 complete. Results: {output_jsonl}")
+    return all_results
 # =============================================================================
 # Main:
 # =============================================================================
