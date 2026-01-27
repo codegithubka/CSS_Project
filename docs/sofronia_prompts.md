@@ -1,3 +1,63 @@
+### Direct Movement Prey-Predator
+create the predator-prey movement where the predators follow the preys behaviour in update_sync function
+
+```
+OUTPUT:
+Extended _pp_async_kernel_directed() in numba_optimized.py
+
+elif state == 2:  # PREDATOR - directed hunting
+            if np.random.random() < pred_death_val:
+                grid[r, c] = 0
+                continue
+            
+            prey_count = 0
+            for k in range(n_shifts):
+                check_r = (r + dr_arr[k]) % rows
+                check_c = (c + dc_arr[k]) % cols
+                if grid[check_r, check_c] == 1:
+                    prey_count += 1
+            
+            if prey_count > 0:
+                target_idx = np.random.randint(0, prey_count)
+                found = 0
+                nr, nc = 0, 0
+                for k in range(n_shifts):
+                    check_r = (r + dr_arr[k]) % rows
+                    check_c = (c + dc_arr[k]) % cols
+                    if grid[check_r, check_c] == 1:
+                        if found == target_idx:
+                            nr = check_r
+                            nc = check_c
+                            break
+                        found += 1
+                
+                if np.random.random() < pred_birth_val:
+                    grid[nr, nc] = 2
+                    prey_death_arr[nr, nc] = np.nan
+            else:
+                nbi = np.random.randint(0, n_shifts)
+                nr = (r + dr_arr[nbi]) % rows
+                nc = (c + dc_arr[nbi]) % cols
+                
+                if grid[nr, nc] == 1:
+                    if np.random.random() < pred_birth_val:
+                        grid[nr, nc] = 2
+                        prey_death_arr[nr, nc] = np.nan
+
+```
+
+### SOC Visualization
+
+create one file with included visualization show if our prey-preditor cellular automaton structure follows soc, focus on perturbation from the initial configuration not at the critical point, sample from different configurations while varying more than the death and birth rates of the prey not run a full analysis of course on that and observe behaviour, soc should have these 4:  • Slow drive
+• Build-up of ‘stress’
+• Intermittent release of this stress
+• Self organization
+
+```
+OUTPUT:
+
+I'll create a comprehensive SOC analysis file for your prey-predator cellular automaton.
+
 """
 Self-Organized Criticality (SOC) Analysis for Prey-Predator Cellular Automaton
 
@@ -338,188 +398,7 @@ def analyze_soc_robustness(experiment_results: List[Dict]) -> Dict:
 
 
 # ============================================================================
-# 5. AVALANCHE VISUALIZATION
-# ============================================================================
-
-def track_avalanche_propagation(grids_history: List[np.ndarray],
-                                avalanches: List[Tuple[int, float]],
-                                sensitivity: float = 0.05) -> Dict:
-    """
-    Track spatial propagation of avalanches on the grid.
-    
-    Args:
-        grids_history: List of grid snapshots
-        avalanches: List of (time_step, magnitude) tuples
-        sensitivity: Threshold for detecting change propagation
-        
-    Returns:
-        Dict with avalanche events containing spatial information
-    """
-    avalanche_events = []
-    max_pop = max([(g > 0).sum() for g in grids_history])
-    
-    for event_t, event_mag in avalanches:
-        # Look at grids around event time (±5 steps)
-        window = 5
-        start_t = max(0, event_t - window)
-        end_t = min(len(grids_history) - 1, event_t + window)
-        
-        # Compute change magnitude for each cell
-        change_map = np.zeros(grids_history[0].shape)
-        if event_t > 0:
-            before = (grids_history[event_t - 1] > 0).astype(float)
-            after = (grids_history[event_t] > 0).astype(float)
-            change_map = np.abs(after - before)
-        
-        # Track population changes
-        pop_before = (grids_history[start_t] > 0).sum() if start_t < len(grids_history) else 0
-        pop_after = (grids_history[min(event_t + 2, len(grids_history)-1)] > 0).sum()
-        pop_change = abs(pop_after - pop_before)
-        
-        avalanche_events.append({
-            "time": event_t,
-            "magnitude": event_mag,
-            "pop_change": pop_change,
-            "change_map": change_map,
-            "window": (start_t, end_t)
-        })
-    
-    return {"events": avalanche_events, "max_pop": max_pop}
-
-
-def visualize_avalanche_details(experiment_results: List[Dict],
-                               output_file: Optional[str] = None,
-                               redetect_threshold: Optional[float] = None):
-    """
-    Create detailed avalanche visualization showing:
-    - Spatial propagation of avalanches
-    - Avalanche magnitude distribution
-    - Timeline of avalanche events
-    - Grid snapshots during/after avalanches
-    
-    Args:
-        experiment_results: List of experiment results
-        output_file: Optional file path to save figure
-        redetect_threshold: Optional lower threshold to re-detect more avalanches (e.g., 0.02)
-                           If provided, will re-detect avalanches with this threshold
-    """
-    fig = plt.figure(figsize=(16, 12))
-    gs = GridSpec(3, 3, figure=fig, hspace=0.35, wspace=0.3)
-    
-    # Select representative experiment
-    rep_idx = len(experiment_results) // 2
-    rep_result = experiment_results[rep_idx]
-    
-    # Re-detect avalanches with lower threshold if specified
-    if redetect_threshold is not None:
-        avalanches = detect_avalanche_events(rep_result["grids_history"], 
-                                            population_change_threshold=redetect_threshold)
-    else:
-        avalanches = rep_result["avalanches"]
-    
-    # ========== TOP ROW: AVALANCHE TIMELINE AND SIZE DISTRIBUTION ==========
-    
-    # Plot 1: Avalanche timeline
-    ax1 = fig.add_subplot(gs[0, :2])
-    
-    if avalanches:
-        times = [t for t, _ in avalanches]
-        mags = [mag for _, mag in avalanches]
-        
-        # Color by magnitude with enhanced visibility
-        scatter = ax1.scatter(times, mags, c=mags, cmap='hot', s=350, 
-                             alpha=0.8, edgecolors='darkred', linewidth=2.5)
-        
-        # Add connecting line to show temporal evolution
-        times_sorted = sorted(range(len(mags)), key=lambda i: times[i])
-        sorted_times = [times[i] for i in times_sorted]
-        sorted_mags = [mags[i] for i in times_sorted]
-        ax1.plot(sorted_times, sorted_mags, 'darkred', alpha=0.4, linewidth=2)
-        
-        cbar = plt.colorbar(scatter, ax=ax1)
-        cbar.set_label('Magnitude (Frac. Change)', fontsize=11, fontweight='bold')
-        
-        # Add threshold line if re-detected
-        if redetect_threshold is not None:
-            ax1.text(0.02, 0.98, f'Detection Threshold: {redetect_threshold:.3f}', 
-                    transform=ax1.transAxes, fontsize=10, verticalalignment='top',
-                    bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
-    else:
-        ax1.text(0.5, 0.5, 'No Avalanches Detected', 
-                ha='center', va='center', fontsize=14, fontweight='bold', color='red')
-    
-    ax1.axvline(rep_result["n_equilibration"], color='red', linestyle='--', 
-               linewidth=2.5, alpha=0.7, label='Perturbation Start')
-    ax1.set_xlabel('Time Step', fontsize=12, fontweight='bold')
-    ax1.set_ylabel('Avalanche Magnitude', fontsize=12, fontweight='bold')
-    ax1.set_title('Avalanche Timeline: Temporal Sequence of Events', 
-                  fontsize=13, fontweight='bold', color='darkred')
-    ax1.legend(fontsize=11, loc='upper left')
-    ax1.grid(True, alpha=0.4, linewidth=1.5)
-    
-    # Plot 2: Magnitude distribution (histogram)
-    ax2 = fig.add_subplot(gs[0, 2])
-    
-    if avalanches:
-        mags = np.array([mag for _, mag in avalanches])
-        ax2.hist(mags, bins=max(8, len(mags)//2), color='orangered', 
-                edgecolor='darkred', alpha=0.8, linewidth=2)
-        ax2.set_xlabel('Magnitude', fontsize=11, fontweight='bold')
-        ax2.set_ylabel('Frequency', fontsize=11, fontweight='bold')
-        ax2.set_title(f'Avalanche\nSize Distribution\n(N={len(mags)})', 
-                     fontsize=12, fontweight='bold', color='darkred')
-        ax2.grid(True, alpha=0.4, axis='y', linewidth=1.5)
-        
-        # Add statistics text
-        stats_mini = f"μ={mags.mean():.4f}\nσ={mags.std():.4f}"
-        ax2.text(0.98, 0.97, stats_mini, transform=ax2.transAxes,
-                fontsize=9, verticalalignment='top', horizontalalignment='right',
-                fontfamily='monospace',
-                bbox=dict(boxstyle='round', facecolor='lightyellow', alpha=0.8))
-    else:
-        ax2.text(0.5, 0.5, 'No Data', ha='center', va='center', fontsize=11, fontweight='bold')
-        ax2.set_title('Size Distribution', fontsize=12, fontweight='bold')
-
-    
-    # ========== MIDDLE ROW: GRID SNAPSHOTS DURING AVALANCHES ==========
-    
-    # Show grid snapshots at different avalanche times
-    if avalanches and rep_result["grids_history"]:
-        # Get up to 3 representative avalanche times
-        avalanche_times = [t for t, _ in avalanches]
-        if len(avalanche_times) > 3:
-            selected_times = [avalanche_times[i] for i in np.linspace(0, len(avalanche_times)-1, 3).astype(int)]
-        else:
-            selected_times = avalanche_times
-        
-        for idx, t in enumerate(selected_times):
-            ax = fig.add_subplot(gs[1, idx])
-            
-            if 0 <= t < len(rep_result["grids_history"]):
-                grid = rep_result["grids_history"][t]
-                im = ax.imshow(grid, cmap='RdYlGn_r', interpolation='nearest', vmin=0, vmax=2)
-                mag = next((m for tm, m in avalanches if tm == t), 0)
-                ax.set_title(f'Grid at T={t}\n(Magnitude: {mag:.4f})', 
-                            fontsize=11, fontweight='bold', color='darkred')
-                ax.set_xticks([])
-                ax.set_yticks([])
-                cbar = plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.set_ticks([0, 1, 2])
-                cbar.set_ticklabels(['Empty', 'Prey', 'Pred'], fontsize=9)
-
-    
-    plt.suptitle('Prey-Predator CA: Detailed Avalanche Analysis',
-                fontsize=14, fontweight='bold', y=0.995)
-    
-    if output_file:
-        plt.savefig(output_file, dpi=150, bbox_inches='tight')
-        print(f"Avalanche visualization saved to {output_file}")
-    
-    return fig
-
-
-# ============================================================================
-# 6. MAIN VISUALIZATION
+# 5. VISUALIZATION
 # ============================================================================
 
 def visualize_soc_properties(experiment_results: List[Dict],
@@ -709,17 +588,13 @@ def main():
     print()
     
     # Create visualization
-    print("[4/4] Creating comprehensive visualizations...")
+    print("[4/4] Creating comprehensive visualization...")
     output_path = Path(__file__).parent.parent / "soc_analysis_results.png"
     visualize_soc_properties(experiment_results, robustness_metrics, str(output_path))
-    print(f"     Main SOC visualization saved to: {output_path}")
-    
-    # Detailed avalanche visualization with lower detection threshold for visibility
-    avalanche_path = Path(__file__).parent.parent / "avalanche_analysis.png"
-    visualize_avalanche_details(experiment_results, str(avalanche_path), redetect_threshold=0.02)
-    print(f"     Avalanche details saved to: {avalanche_path}")
-    print(f"     (Using detection threshold: 0.02 for enhanced visibility)")
+    print(f"     Saved to: {output_path}")
 
 
 if __name__ == "__main__":
     main()
+
+```
