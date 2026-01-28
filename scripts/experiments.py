@@ -192,6 +192,7 @@ def run_single_simulation(
     # Warmup phase
     for _ in range(warmup_steps):
         model.update()
+
         
     # Measurement phase: start collecting our mertics
     prey_pops, pred_pops = [], [] # Prey populations and predator populations
@@ -283,6 +284,8 @@ def run_single_simulation(
         result["evolved_prey_death_mean"] = float(np.mean(valid_means)) if valid_means else np.nan
         result["evolved_prey_death_std"] = float(np.mean([v for v in evolved_stds if not np.isnan(v)])) if evolved_stds else np.nan
         result["evolved_prey_death_final"] = valid_means[-1] if valid_means else np.nan
+        result["evolved_prey_death_min"] = float(np.min(valid_means)) if valid_means else np.nan
+        result["evolved_prey_death_max"] = float(np.max(valid_means)) if valid_means else np.nan
         result["evolve_sd"] = cfg.evolve_sd
         
         if cfg.save_timeseries:
@@ -520,7 +523,7 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
     # Define the global sweep values
-    sweep_values = np.linspace(0.0, 1.0, 11)
+    sweep_values = np.linspace(0.5, 0.95, 10)
     
     # Logging
     logger.info(f"Phase 4: Full 4D Parameter Sweep")
@@ -667,7 +670,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
     # Define the global sweep values (same as Phase 4)
-    sweep_values = np.linspace(0.0, 1.0, 11)
+    sweep_values = np.linspace(0.05, 0.95 10)
     
     # Logging
     logger.info(f"Phase 6: Full 4D Parameter Sweep (Directed Hunting)")

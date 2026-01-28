@@ -1,11 +1,11 @@
 #!/bin/bash
 #SBATCH --job-name=pp_phase2
-#SBATCH --partition=rome
+#SBATCH --partition=genoa
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=128
 #SBATCH --time=04:00:00
-#SBATCH --mem=64G
+#SBATCH --mem=0
 #SBATCH --output=/home/kanagnostopoul/CSS_Project/pp_phase2_%j.out
 #SBATCH --error=/home/kanagnostopoul/CSS_Project/pp_phase2_%j.err
 

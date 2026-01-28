@@ -210,7 +210,7 @@ PHASE2_CONFIG = Config(
     n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
     n_replicates=10,
     warmup_steps=1000,           # Shorter warmup (evolution starts immediately)
-    measurement_steps=5000,     # Longer measurement to see convergence
+    measurement_steps=10000,     # Longer measurement to see convergence
     
     # Evolution settings
     with_evolution=True,
@@ -245,7 +245,7 @@ PHASE4_CONFIG = Config(
     measurement_steps=500,  # As requested
     with_evolution=False,
     collect_pcf=False,
-    save_timeseries=True,
+    save_timeseries=False,
     timeseries_subsample=10,
     directed_hunting=False,
 )
@@ -272,7 +272,7 @@ PHASE6_CONFIG = Config(
     measurement_steps=500,
     with_evolution=False,
     collect_pcf=False,
-    save_timeseries=True,
+    save_timeseries=False,
     timeseries_subsample=10,
     directed_hunting=True,
 )
