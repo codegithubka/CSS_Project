@@ -3,9 +3,9 @@ a. Fixed color scheme: prey: #1751ED, predator: #CF0808
 b. Legend at the bottom and shared if more than one plot
 
 
-1. Bifuractuion
-- zoomed out
-- zoomed in
+1. Bifuractuion (Mean population vs. prey death rate)
+- zoomed out (phase 1)
+- zoomed in (phase 1.5)
 
 2. Critical Point Power Law
 - At the critical point and away from the critical point (pick critical, subcritical, supercritical)

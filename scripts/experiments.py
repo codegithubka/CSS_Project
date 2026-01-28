@@ -670,7 +670,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
     
     # Define the global sweep values (same as Phase 4)
-    sweep_values = np.linspace(0.05, 0.95 10)
+    sweep_values = np.linspace(0.05, 0.95, 10)
     
     # Logging
     logger.info(f"Phase 6: Full 4D Parameter Sweep (Directed Hunting)")
