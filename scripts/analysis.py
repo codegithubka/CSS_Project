@@ -12,6 +12,9 @@ Usage:
     python plot_pp_results.py results/ --pcf-only         # Just PCF analysis
     python plot_pp_results.py results/ --fss-only         # Just FSS plots
     python plot_pp_results.py results/ --bifurcation-only # Just bifurcation diagram
+    python plot_pp_results.py results/ --phase2-only      # Just Phase 2 SOC analysis
+    python plot_pp_results.py results/ --phase3-only      # Just Phase 3 FSS analysis
+    python plot_pp_results.py results/ --phase4-only      # Just Phase 4 sensitivity analysis
     python plot_pp_results.py results/ --dpi 300          # High-res for publication
 """
 
@@ -125,7 +128,7 @@ def load_sensitivity_results(results_dir: Path) -> List[Dict]:
         return json.load(f)
 
 
-def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     """
     Load bifurcation analysis results.
     
@@ -133,11 +136,8 @@ def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray,
     -------
     sweep_params : np.ndarray
         1D array of control parameter values (prey death rates).
-    prey_results : np.ndarray
-        2D array of shape (n_sweep, n_replicates) with prey population counts
-        at equilibrium.
-    predator_results : np.ndarray
-        2D array of shape (n_sweep, n_replicates) with predator population counts
+    results : np.ndarray
+        2D array of shape (n_sweep, n_replicates) with population counts
         at equilibrium.
     """
     npz_file = results_dir / "bifurcation_results.npz"
@@ -146,29 +146,122 @@ def load_bifurcation_results(results_dir: Path) -> Tuple[np.ndarray, np.ndarray,
     if npz_file.exists():
         logging.info(f"Loading bifurcation results from {npz_file}")
         data = np.load(npz_file)
-        # Handle both old format (single 'results') and new format (prey/predator)
-        if 'prey_results' in data:
-            return data['sweep_params'], data['prey_results'], data['predator_results']
-        else:
-            # Old format - only prey results, create empty predator array
-            prey_results = data['results']
-            predator_results = np.full_like(prey_results, np.nan)
-            return data['sweep_params'], prey_results, predator_results
+        return data['sweep_params'], data['results']
     elif json_file.exists():
         logging.info(f"Loading bifurcation results from {json_file}")
         with open(json_file, 'r') as f:
             data = json.load(f)
-        # Handle both old and new format
-        if 'prey_results' in data:
-            return (np.array(data['sweep_params']), 
-                    np.array(data['prey_results']),
-                    np.array(data['predator_results']))
-        else:
-            prey_results = np.array(data['results'])
-            predator_results = np.full_like(prey_results, np.nan)
-            return np.array(data['sweep_params']), prey_results, predator_results
+        return np.array(data['sweep_params']), np.array(data['results'])
     else:
         raise FileNotFoundError(f"Bifurcation results not found in {results_dir}")
+
+
+def load_phase2_results(results_dir: Path) -> List[Dict]:
+    """
+    Load Phase 2 (SOC test) results.
+    
+    Phase 2 tests self-organized criticality by running simulations with evolution
+    from different initial prey_death values and checking if they converge.
+    
+    Returns
+    -------
+    results : List[Dict]
+        List of simulation results, each containing:
+        - prey_death: initial prey death rate
+        - evolved_prey_death_final: final evolved prey death rate
+        - evolved_prey_death_mean: mean evolved prey death during measurement
+        - prey_mean, pred_mean: equilibrium populations
+    """
+    jsonl_file = results_dir / "phase2_results.jsonl"
+    json_file = results_dir / "phase2_results.json"
+    
+    if jsonl_file.exists():
+        logging.info(f"Loading Phase 2 results from {jsonl_file}")
+        results = []
+        with open(jsonl_file, 'r') as f:
+            for line in f:
+                if line.strip():
+                    results.append(json.loads(line))
+        return results
+    elif json_file.exists():
+        logging.info(f"Loading Phase 2 results from {json_file}")
+        with open(json_file, 'r') as f:
+            return json.load(f)
+    else:
+        raise FileNotFoundError(f"Phase 2 results not found in {results_dir}")
+
+
+def load_phase3_results(results_dir: Path) -> List[Dict]:
+    """
+    Load Phase 3 (Finite-Size Scaling) results.
+    
+    Phase 3 runs simulations at the critical point across multiple grid sizes
+    to analyze how cluster size distributions scale with system size L.
+    
+    Returns
+    -------
+    results : List[Dict]
+        List of simulation results, each containing:
+        - grid_size: system size L
+        - prey_cluster_sizes, pred_cluster_sizes: cluster size lists
+        - prey_largest_fraction: largest cluster / total population
+        - prey_mean, pred_mean: equilibrium populations
+    """
+    jsonl_file = results_dir / "phase3_results.jsonl"
+    json_file = results_dir / "phase3_results.json"
+    
+    if jsonl_file.exists():
+        logging.info(f"Loading Phase 3 results from {jsonl_file}")
+        results = []
+        with open(jsonl_file, 'r') as f:
+            for line in f:
+                if line.strip():
+                    results.append(json.loads(line))
+        return results
+    elif json_file.exists():
+        logging.info(f"Loading Phase 3 results from {json_file}")
+        with open(json_file, 'r') as f:
+            return json.load(f)
+    else:
+        raise FileNotFoundError(f"Phase 3 results not found in {results_dir}")
+
+
+def load_phase4_results(results_dir: Path) -> List[Dict]:
+    """
+    Load Phase 4 (Global Sensitivity Analysis) results.
+    
+    Phase 4 runs a full 4D parameter sweep varying:
+    - prey_birth, prey_death, predator_birth, predator_death
+    
+    This tests the sensitivity of the hydra effect and critical point
+    across different parameter regimes.
+    
+    Returns
+    -------
+    results : List[Dict]
+        List of simulation results, each containing:
+        - prey_birth, prey_death, predator_birth, predator_death: parameters
+        - prey_mean, pred_mean: equilibrium populations
+        - prey_survived, pred_survived: survival indicators
+        - evolved_prey_death_final (if evolution enabled): final evolved trait
+    """
+    jsonl_file = results_dir / "phase4_results.jsonl"
+    json_file = results_dir / "phase4_results.json"
+    
+    if jsonl_file.exists():
+        logging.info(f"Loading Phase 4 results from {jsonl_file}")
+        results = []
+        with open(jsonl_file, 'r') as f:
+            for line in f:
+                if line.strip():
+                    results.append(json.loads(line))
+        return results
+    elif json_file.exists():
+        logging.info(f"Loading Phase 4 results from {json_file}")
+        with open(json_file, 'r') as f:
+            return json.load(f)
+    else:
+        raise FileNotFoundError(f"Phase 4 results not found in {results_dir}")
 
 
 # =============================================================================
@@ -593,14 +686,12 @@ def plot_fss_analysis(fss_results: List[Dict], output_dir: Path, dpi: int = 150)
     logging.info(f"Saved {output_file}")
 
 
-def plot_bifurcation_diagram(sweep_params: np.ndarray, 
-                             prey_results: np.ndarray,
-                             predator_results: np.ndarray,
+def plot_bifurcation_diagram(sweep_params: np.ndarray, results: np.ndarray,
                              output_dir: Path, dpi: int = 150,
                              control_label: str = "Prey Death Rate",
                              population_label: str = "Population at Equilibrium"):
     """
-    Generate a stochastic bifurcation diagram for both prey and predator.
+    Generate a stochastic bifurcation diagram.
     
     Shows the distribution of equilibrium population counts as a function of
     a control parameter (e.g., prey death rate), with scatter points for each
@@ -611,13 +702,10 @@ def plot_bifurcation_diagram(sweep_params: np.ndarray,
     sweep_params : np.ndarray
         1D array of control parameter values (e.g., prey death rates).
         Shape: (n_sweep,)
-    prey_results : np.ndarray
-        2D array of prey population counts at equilibrium.
+    results : np.ndarray
+        2D array of population counts at equilibrium.
         Shape: (n_sweep, n_replicates) where rows correspond to sweep_params
         and columns are replicate simulation runs.
-    predator_results : np.ndarray
-        2D array of predator population counts at equilibrium.
-        Shape: (n_sweep, n_replicates).
     output_dir : Path
         Directory to save the output figure.
     dpi : int
@@ -627,64 +715,36 @@ def plot_bifurcation_diagram(sweep_params: np.ndarray,
     population_label : str
         Label for y-axis (population count).
     """
-    n_sweep, n_replicates = prey_results.shape
-    has_predator_data = not np.all(np.isnan(predator_results))
+    n_sweep, n_replicates = results.shape
     
-    fig, ax = plt.subplots(figsize=(14, 8))
+    fig, ax = plt.subplots(figsize=(12, 7))
     
     # Scatter all individual replicates with transparency
-    # Prey - green tones
     for i, param in enumerate(sweep_params):
         ax.scatter(
             np.full(n_replicates, param),
-            prey_results[i, :],
-            alpha=0.3, s=15, c='forestgreen', edgecolors='none'
+            results[i, :],
+            alpha=0.3, s=15, c='steelblue', edgecolors='none'
         )
     
-    # Predator - red tones (if data available)
-    if has_predator_data:
-        for i, param in enumerate(sweep_params):
-            ax.scatter(
-                np.full(n_replicates, param),
-                predator_results[i, :],
-                alpha=0.3, s=15, c='crimson', edgecolors='none'
-            )
+    # Compute summary statistics
+    means = np.mean(results, axis=1)
+    medians = np.median(results, axis=1)
+    q25 = np.percentile(results, 25, axis=1)
+    q75 = np.percentile(results, 75, axis=1)
     
-    # Compute summary statistics for prey
-    prey_means = np.mean(prey_results, axis=1)
-    prey_medians = np.median(prey_results, axis=1)
-    prey_q25 = np.percentile(prey_results, 25, axis=1)
-    prey_q75 = np.percentile(prey_results, 75, axis=1)
-    
-    # Plot prey median line and IQR envelope
-    ax.fill_between(sweep_params, prey_q25, prey_q75, alpha=0.2, color='green',
-                    label='Prey IQR')
-    ax.plot(sweep_params, prey_medians, 'o-', color='darkgreen', linewidth=2,
-            markersize=5, label='Prey Median')
-    ax.plot(sweep_params, prey_means, 's--', color='forestgreen', linewidth=1.5,
-            markersize=4, alpha=0.7, label='Prey Mean')
-    
-    # Compute and plot predator statistics if available
-    if has_predator_data:
-        pred_means = np.mean(predator_results, axis=1)
-        pred_medians = np.median(predator_results, axis=1)
-        pred_q25 = np.percentile(predator_results, 25, axis=1)
-        pred_q75 = np.percentile(predator_results, 75, axis=1)
-        
-        ax.fill_between(sweep_params, pred_q25, pred_q75, alpha=0.2, color='red',
-                        label='Predator IQR')
-        ax.plot(sweep_params, pred_medians, 'o-', color='darkred', linewidth=2,
-                markersize=5, label='Predator Median')
-        ax.plot(sweep_params, pred_means, 's--', color='crimson', linewidth=1.5,
-                markersize=4, alpha=0.7, label='Predator Mean')
+    # Plot median line and IQR envelope
+    ax.fill_between(sweep_params, q25, q75, alpha=0.25, color='coral',
+                    label='IQR (25th-75th percentile)')
+    ax.plot(sweep_params, medians, 'o-', color='darkred', linewidth=2,
+            markersize=5, label='Median')
+    ax.plot(sweep_params, means, 's--', color='black', linewidth=1.5,
+            markersize=4, alpha=0.7, label='Mean')
     
     ax.set_xlabel(control_label)
     ax.set_ylabel(population_label)
-    title = f"Stochastic Bifurcation Diagram\n({n_replicates} replicates per parameter value)"
-    if has_predator_data:
-        title = f"Prey-Predator {title}"
-    ax.set_title(title)
-    ax.legend(loc='best', ncol=2)
+    ax.set_title(f"Stochastic Bifurcation Diagram\n({n_replicates} replicates per parameter value)")
+    ax.legend(loc='best')
     ax.grid(True, alpha=0.3)
     
     # Add rug plot at bottom showing parameter sampling density
@@ -791,6 +851,878 @@ def plot_sensitivity_analysis(sens_results: List[Dict], output_dir: Path, dpi: i
     logging.info(f"Saved {output_file}")
 
 
+def plot_phase2_soc_analysis(results: List[Dict], output_dir: Path, dpi: int = 150,
+                             critical_prey_death: float = 0.0963):
+    """
+    Generate Phase 2 self-organized criticality (SOC) analysis plots.
+    
+    Tests whether prey populations evolve toward a critical point regardless
+    of their starting prey_death value.
+    
+    Parameters
+    ----------
+    results : List[Dict]
+        Phase 2 simulation results with evolved prey_death values.
+    output_dir : Path
+        Directory to save output figures.
+    dpi : int
+        Output resolution.
+    critical_prey_death : float
+        Expected critical prey death rate for reference line.
+    """
+    # Extract data
+    initial_pd = []
+    final_pd = []
+    mean_pd = []
+    prey_pops = []
+    pred_pops = []
+    
+    for r in results:
+        if r.get('evolved_prey_death_final') is not None:
+            initial_pd.append(r.get('prey_death', np.nan))
+            final_pd.append(r.get('evolved_prey_death_final', np.nan))
+            mean_pd.append(r.get('evolved_prey_death_mean', np.nan))
+            prey_pops.append(r.get('prey_mean', np.nan))
+            pred_pops.append(r.get('pred_mean', np.nan))
+    
+    initial_pd = np.array(initial_pd)
+    final_pd = np.array(final_pd)
+    mean_pd = np.array(mean_pd)
+    prey_pops = np.array(prey_pops)
+    pred_pops = np.array(pred_pops)
+    
+    # Remove NaN values
+    valid = ~(np.isnan(initial_pd) | np.isnan(final_pd))
+    initial_pd = initial_pd[valid]
+    final_pd = final_pd[valid]
+    mean_pd = mean_pd[valid]
+    prey_pops = prey_pops[valid]
+    pred_pops = pred_pops[valid]
+    
+    if len(initial_pd) == 0:
+        logging.warning("No valid Phase 2 results to plot")
+        return None
+    
+    # Get unique initial values for grouping
+    unique_initial = np.unique(initial_pd)
+    
+    # Create figure with 4 panels
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig.suptitle("Phase 2: Self-Organized Criticality Test", fontsize=14, fontweight='bold')
+    
+    # ==========================================================================
+    # Panel 1: Convergence Plot (Main SOC Test)
+    # ==========================================================================
+    ax = axes[0, 0]
+    
+    # Plot individual replicates as scatter
+    ax.scatter(initial_pd, final_pd, alpha=0.4, s=30, c='steelblue', label='Individual runs')
+    
+    # Plot mean ± std for each initial value
+    means = []
+    stds = []
+    for init_val in unique_initial:
+        mask = initial_pd == init_val
+        means.append(np.mean(final_pd[mask]))
+        stds.append(np.std(final_pd[mask]))
+    
+    ax.errorbar(unique_initial, means, yerr=stds, fmt='o-', color='darkred', 
+                linewidth=2, markersize=8, capsize=5, label='Mean ± SD')
+    
+    # Reference lines
+    ax.axhline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+               label=f'Critical point ({critical_prey_death})')
+    ax.plot([0, 0.2], [0, 0.2], 'k:', alpha=0.5, label='No evolution (y=x)')
+    
+    ax.set_xlabel("Initial Prey Death Rate", fontsize=12)
+    ax.set_ylabel("Final Evolved Prey Death Rate", fontsize=12)
+    ax.set_title("SOC Test: Do All Initial Conditions Converge?", fontsize=13)
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(-0.01, 0.21)
+    ax.set_ylim(-0.01, 0.21)
+    
+    # ==========================================================================
+    # Panel 2: Distribution of Final Evolved Values
+    # ==========================================================================
+    ax = axes[0, 1]
+    
+    # Histogram of final evolved prey_death
+    ax.hist(final_pd, bins=30, density=True, alpha=0.7, color='steelblue', 
+            edgecolor='black', label='Final evolved values')
+    
+    # Add vertical line for critical point
+    ax.axvline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+               label=f'Critical point ({critical_prey_death})')
+    
+    # Add vertical line for mean of final values
+    final_mean = np.mean(final_pd)
+    ax.axvline(final_mean, color='darkred', linestyle='-', linewidth=2,
+               label=f'Mean ({final_mean:.4f})')
+    
+    ax.set_xlabel("Final Evolved Prey Death Rate", fontsize=12)
+    ax.set_ylabel("Density", fontsize=12)
+    ax.set_title("Distribution of Final Evolved Values", fontsize=13)
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ==========================================================================
+    # Panel 3: Final Prey Death vs Population
+    # ==========================================================================
+    ax = axes[1, 0]
+    
+    # Color by initial prey_death
+    scatter = ax.scatter(final_pd, prey_pops, c=initial_pd, cmap='viridis', 
+                         alpha=0.6, s=40)
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label('Initial Prey Death Rate', fontsize=10)
+    
+    ax.axvline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+               label=f'Critical point')
+    
+    ax.set_xlabel("Final Evolved Prey Death Rate", fontsize=12)
+    ax.set_ylabel("Equilibrium Prey Population", fontsize=12)
+    ax.set_title("Population vs Evolved Trait", fontsize=13)
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ==========================================================================
+    # Panel 4: Boxplot of Final Values by Initial Condition
+    # ==========================================================================
+    ax = axes[1, 1]
+    
+    # Create boxplot data
+    boxplot_data = []
+    boxplot_labels = []
+    for init_val in unique_initial:
+        mask = initial_pd == init_val
+        boxplot_data.append(final_pd[mask])
+        boxplot_labels.append(f'{init_val:.2f}')
+    
+    bp = ax.boxplot(boxplot_data, labels=boxplot_labels, patch_artist=True)
+    
+    # Color boxes
+    colors = plt.cm.viridis(np.linspace(0, 1, len(unique_initial)))
+    for patch, color in zip(bp['boxes'], colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.7)
+    
+    ax.axhline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+               label=f'Critical point ({critical_prey_death})')
+    
+    ax.set_xlabel("Initial Prey Death Rate", fontsize=12)
+    ax.set_ylabel("Final Evolved Prey Death Rate", fontsize=12)
+    ax.set_title("Convergence by Initial Condition", fontsize=13)
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    output_file = output_dir / "phase2_soc_analysis.png"
+    plt.savefig(output_file, dpi=dpi)
+    plt.close()
+    logging.info(f"Saved {output_file}")
+    
+    # ==========================================================================
+    # Generate Summary Statistics
+    # ==========================================================================
+    summary = {
+        'n_simulations': len(final_pd),
+        'initial_prey_death_values': unique_initial.tolist(),
+        'n_replicates_per_condition': len(final_pd) // len(unique_initial) if len(unique_initial) > 0 else 0,
+        'final_prey_death_mean': float(np.mean(final_pd)),
+        'final_prey_death_std': float(np.std(final_pd)),
+        'final_prey_death_median': float(np.median(final_pd)),
+        'critical_prey_death_reference': critical_prey_death,
+        'distance_from_critical': float(np.abs(np.mean(final_pd) - critical_prey_death)),
+        'convergence_achieved': float(np.std(final_pd)) < 0.02,  # Low variance = convergence
+    }
+    
+    # Per-condition statistics
+    summary['per_condition'] = {}
+    for init_val in unique_initial:
+        mask = initial_pd == init_val
+        summary['per_condition'][f'init_{init_val:.3f}'] = {
+            'mean': float(np.mean(final_pd[mask])),
+            'std': float(np.std(final_pd[mask])),
+            'n': int(np.sum(mask)),
+        }
+    
+    summary_file = output_dir / "phase2_soc_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    logging.info(f"Saved {summary_file}")
+    
+    # Log key findings
+    logging.info("Phase 2 SOC Analysis Summary:")
+    logging.info(f"  Final prey_death mean: {summary['final_prey_death_mean']:.4f} ± {summary['final_prey_death_std']:.4f}")
+    logging.info(f"  Critical reference: {critical_prey_death}")
+    logging.info(f"  Distance from critical: {summary['distance_from_critical']:.4f}")
+    logging.info(f"  Convergence achieved: {summary['convergence_achieved']}")
+    
+    return output_file
+
+
+def plot_phase3_fss_analysis(results: List[Dict], output_dir: Path, dpi: int = 150):
+    """
+    Generate Phase 3 finite-size scaling (FSS) analysis plots.
+    
+    Analyzes how cluster size distributions scale with system size L at the
+    critical point. Key predictions for critical systems:
+    - Cluster size distribution: P(s) ~ s^(-tau) with cutoff at s_max ~ L^D
+    - Largest cluster fraction scales with L
+    
+    Parameters
+    ----------
+    results : List[Dict]
+        Phase 3 simulation results with cluster sizes at different grid sizes.
+    output_dir : Path
+        Directory to save output figures.
+    dpi : int
+        Output resolution.
+    """
+    import ast
+    
+    # Parse cluster sizes helper
+    def parse_clusters(x):
+        if isinstance(x, list):
+            return x
+        if x is None or (isinstance(x, float) and np.isnan(x)):
+            return []
+        if isinstance(x, str):
+            try:
+                return ast.literal_eval(x)
+            except:
+                return []
+        return []
+    
+    # Extract data by grid size
+    grid_sizes = sorted(set(r['grid_size'] for r in results))
+    
+    # Data structures for analysis
+    data_by_L = {L: {
+        'prey_clusters': [],
+        'pred_clusters': [],
+        'prey_largest_frac': [],
+        'pred_largest_frac': [],
+        'prey_max_cluster': [],
+        'prey_n_clusters': [],
+        'prey_mean_cluster': [],
+    } for L in grid_sizes}
+    
+    # Collect data
+    for r in results:
+        L = r['grid_size']
+        prey_clusters = parse_clusters(r.get('prey_cluster_sizes', []))
+        pred_clusters = parse_clusters(r.get('pred_cluster_sizes', []))
+        
+        data_by_L[L]['prey_clusters'].extend(prey_clusters)
+        data_by_L[L]['pred_clusters'].extend(pred_clusters)
+        
+        if r.get('prey_largest_fraction') is not None and not np.isnan(r.get('prey_largest_fraction', np.nan)):
+            data_by_L[L]['prey_largest_frac'].append(r['prey_largest_fraction'])
+        
+        if prey_clusters:
+            data_by_L[L]['prey_max_cluster'].append(max(prey_clusters))
+            data_by_L[L]['prey_n_clusters'].append(len(prey_clusters))
+            data_by_L[L]['prey_mean_cluster'].append(np.mean(prey_clusters))
+    
+    if len(grid_sizes) == 0:
+        logging.warning("No valid Phase 3 results to plot")
+        return None
+    
+    # Create figure with 4 panels
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig.suptitle("Phase 3: Finite-Size Scaling at Critical Point", fontsize=14, fontweight='bold')
+    
+    # Color map for different grid sizes
+    colors = plt.cm.viridis(np.linspace(0, 1, len(grid_sizes)))
+    
+    # ==========================================================================
+    # Panel 1: Cluster Size Distributions by Grid Size
+    # ==========================================================================
+    ax = axes[0, 0]
+    
+    for L, color in zip(grid_sizes, colors):
+        clusters = np.array(data_by_L[L]['prey_clusters'])
+        if len(clusters) == 0:
+            continue
+        clusters = clusters[clusters > 0]
+        
+        # Compute histogram
+        sizes, counts = np.unique(clusters, return_counts=True)
+        # Normalize by number of replicates for fair comparison
+        n_replicates = len([r for r in results if r['grid_size'] == L])
+        counts = counts / n_replicates
+        
+        ax.scatter(sizes, counts, alpha=0.5, s=15, color=color, label=f'L={L}')
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('Cluster Size s', fontsize=12)
+    ax.set_ylabel('P(s) (normalized)', fontsize=12)
+    ax.set_title('Cluster Size Distribution vs System Size', fontsize=13)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ==========================================================================
+    # Panel 2: Maximum Cluster Size vs L (Power-law scaling)
+    # ==========================================================================
+    ax = axes[0, 1]
+    
+    L_vals = []
+    s_max_mean = []
+    s_max_std = []
+    
+    for L in grid_sizes:
+        max_clusters = data_by_L[L]['prey_max_cluster']
+        if len(max_clusters) > 0:
+            L_vals.append(L)
+            s_max_mean.append(np.mean(max_clusters))
+            s_max_std.append(np.std(max_clusters))
+    
+    L_vals = np.array(L_vals)
+    s_max_mean = np.array(s_max_mean)
+    s_max_std = np.array(s_max_std)
+    
+    ax.errorbar(L_vals, s_max_mean, yerr=s_max_std, fmt='o-', color='steelblue',
+                markersize=8, capsize=5, linewidth=2, label='Data')
+    
+    # Fit power law: s_max ~ L^D
+    if len(L_vals) >= 3:
+        log_L = np.log10(L_vals)
+        log_s = np.log10(s_max_mean)
+        slope, intercept, r_value, _, _ = linregress(log_L, log_s)
+        
+        fit_L = np.logspace(np.log10(L_vals.min()), np.log10(L_vals.max()), 50)
+        fit_s = 10**intercept * fit_L**slope
+        ax.plot(fit_L, fit_s, 'r--', linewidth=2, 
+                label=f'Fit: $s_{{max}} \\sim L^{{{slope:.2f}}}$ (R²={r_value**2:.3f})')
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('System Size L', fontsize=12)
+    ax.set_ylabel('Maximum Cluster Size $s_{max}$', fontsize=12)
+    ax.set_title('Finite-Size Scaling of Maximum Cluster', fontsize=13)
+    ax.legend(loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ==========================================================================
+    # Panel 3: Largest Cluster Fraction vs L
+    # ==========================================================================
+    ax = axes[1, 0]
+    
+    L_vals_frac = []
+    frac_mean = []
+    frac_std = []
+    
+    for L in grid_sizes:
+        fracs = data_by_L[L]['prey_largest_frac']
+        if len(fracs) > 0:
+            L_vals_frac.append(L)
+            frac_mean.append(np.mean(fracs))
+            frac_std.append(np.std(fracs))
+    
+    L_vals_frac = np.array(L_vals_frac)
+    frac_mean = np.array(frac_mean)
+    frac_std = np.array(frac_std)
+    
+    ax.errorbar(L_vals_frac, frac_mean, yerr=frac_std, fmt='s-', color='forestgreen',
+                markersize=8, capsize=5, linewidth=2, label='Data')
+    
+    # Fit power law for largest fraction scaling
+    if len(L_vals_frac) >= 3:
+        log_L = np.log10(L_vals_frac)
+        log_frac = np.log10(frac_mean)
+        slope_frac, intercept_frac, r_value_frac, _, _ = linregress(log_L, log_frac)
+        
+        fit_L = np.logspace(np.log10(L_vals_frac.min()), np.log10(L_vals_frac.max()), 50)
+        fit_frac = 10**intercept_frac * fit_L**slope_frac
+        ax.plot(fit_L, fit_frac, 'r--', linewidth=2,
+                label=f'Fit: $P_{{\\infty}} \\sim L^{{{slope_frac:.2f}}}$ (R²={r_value_frac**2:.3f})')
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('System Size L', fontsize=12)
+    ax.set_ylabel('Largest Cluster Fraction $P_\\infty$', fontsize=12)
+    ax.set_title('Order Parameter Scaling', fontsize=13)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # ==========================================================================
+    # Panel 4: Number of Clusters vs L
+    # ==========================================================================
+    ax = axes[1, 1]
+    
+    L_vals_n = []
+    n_clusters_mean = []
+    n_clusters_std = []
+    
+    for L in grid_sizes:
+        n_clusters = data_by_L[L]['prey_n_clusters']
+        if len(n_clusters) > 0:
+            L_vals_n.append(L)
+            n_clusters_mean.append(np.mean(n_clusters))
+            n_clusters_std.append(np.std(n_clusters))
+    
+    L_vals_n = np.array(L_vals_n)
+    n_clusters_mean = np.array(n_clusters_mean)
+    n_clusters_std = np.array(n_clusters_std)
+    
+    ax.errorbar(L_vals_n, n_clusters_mean, yerr=n_clusters_std, fmt='d-', color='darkorange',
+                markersize=8, capsize=5, linewidth=2, label='Data')
+    
+    # Fit power law
+    if len(L_vals_n) >= 3:
+        log_L = np.log10(L_vals_n)
+        log_n = np.log10(n_clusters_mean)
+        slope_n, intercept_n, r_value_n, _, _ = linregress(log_L, log_n)
+        
+        fit_L = np.logspace(np.log10(L_vals_n.min()), np.log10(L_vals_n.max()), 50)
+        fit_n = 10**intercept_n * fit_L**slope_n
+        ax.plot(fit_L, fit_n, 'r--', linewidth=2,
+                label=f'Fit: $N_c \\sim L^{{{slope_n:.2f}}}$ (R²={r_value_n**2:.3f})')
+    
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.set_xlabel('System Size L', fontsize=12)
+    ax.set_ylabel('Number of Clusters $N_c$', fontsize=12)
+    ax.set_title('Cluster Count Scaling', fontsize=13)
+    ax.legend(loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_file = output_dir / "phase3_fss_analysis.png"
+    plt.savefig(output_file, dpi=dpi)
+    plt.close()
+    logging.info(f"Saved {output_file}")
+    
+    # ==========================================================================
+    # Generate Summary Statistics
+    # ==========================================================================
+    summary = {
+        'n_simulations': len(results),
+        'grid_sizes': grid_sizes,
+        'n_replicates_per_size': len(results) // len(grid_sizes) if len(grid_sizes) > 0 else 0,
+    }
+    
+    # Scaling exponents
+    if len(L_vals) >= 3:
+        summary['s_max_exponent'] = float(slope)
+        summary['s_max_exponent_r2'] = float(r_value**2)
+    
+    if len(L_vals_frac) >= 3:
+        summary['largest_frac_exponent'] = float(slope_frac)
+        summary['largest_frac_exponent_r2'] = float(r_value_frac**2)
+    
+    if len(L_vals_n) >= 3:
+        summary['n_clusters_exponent'] = float(slope_n)
+        summary['n_clusters_exponent_r2'] = float(r_value_n**2)
+    
+    # Per-size statistics
+    summary['per_size'] = {}
+    for L in grid_sizes:
+        summary['per_size'][f'L_{L}'] = {
+            's_max_mean': float(np.mean(data_by_L[L]['prey_max_cluster'])) if data_by_L[L]['prey_max_cluster'] else None,
+            's_max_std': float(np.std(data_by_L[L]['prey_max_cluster'])) if data_by_L[L]['prey_max_cluster'] else None,
+            'largest_frac_mean': float(np.mean(data_by_L[L]['prey_largest_frac'])) if data_by_L[L]['prey_largest_frac'] else None,
+            'n_clusters_mean': float(np.mean(data_by_L[L]['prey_n_clusters'])) if data_by_L[L]['prey_n_clusters'] else None,
+        }
+    
+    summary_file = output_dir / "phase3_fss_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    logging.info(f"Saved {summary_file}")
+    
+    # Log key findings
+    logging.info("Phase 3 FSS Analysis Summary:")
+    logging.info(f"  Grid sizes tested: {grid_sizes}")
+    if 's_max_exponent' in summary:
+        logging.info(f"  s_max scaling exponent: {summary['s_max_exponent']:.3f} (R²={summary['s_max_exponent_r2']:.3f})")
+    if 'largest_frac_exponent' in summary:
+        logging.info(f"  Largest frac exponent: {summary['largest_frac_exponent']:.3f}")
+    
+    return output_file
+
+
+def plot_phase4_sensitivity_analysis(results: List[Dict], output_dir: Path, dpi: int = 150,
+                                      critical_prey_death: float = 0.0963):
+    """
+    Generate Phase 4 global sensitivity analysis plots.
+    
+    Phase 4 tests the sensitivity of the hydra effect and critical point
+    across a full 4D parameter sweep (prey_birth, prey_death, pred_birth, pred_death).
+    
+    Key analyses:
+    1. Where does the hydra effect occur across parameter space?
+    2. How does the critical point vary with other parameters?
+    3. Is there evidence for self-organized criticality across regimes?
+    
+    Parameters
+    ----------
+    results : List[Dict]
+        Phase 4 simulation results with 4D parameter sweep
+    output_dir : Path
+        Directory to save plots
+    dpi : int
+        Plot resolution
+    critical_prey_death : float
+        Reference critical point for comparison
+    """
+    import pandas as pd
+    
+    # Convert to DataFrame for easier analysis
+    df = pd.DataFrame(results)
+    
+    # Check if evolution data is present
+    has_evolution = 'evolved_prey_death_final' in df.columns and df['evolved_prey_death_final'].notna().any()
+    
+    logging.info(f"Phase 4 Analysis: {len(df)} simulations")
+    logging.info(f"  Evolution data present: {has_evolution}")
+    
+    # Get unique parameter values
+    prey_births = sorted(df['prey_birth'].unique())
+    prey_deaths = sorted(df['prey_death'].unique())
+    pred_births = sorted(df['predator_birth'].unique())
+    pred_deaths = sorted(df['predator_death'].unique())
+    
+    logging.info(f"  prey_birth values: {len(prey_births)} ({min(prey_births):.2f} to {max(prey_births):.2f})")
+    logging.info(f"  prey_death values: {len(prey_deaths)} ({min(prey_deaths):.2f} to {max(prey_deaths):.2f})")
+    logging.info(f"  pred_birth values: {len(pred_births)} ({min(pred_births):.2f} to {max(pred_births):.2f})")
+    logging.info(f"  pred_death values: {len(pred_deaths)} ({min(pred_deaths):.2f} to {max(pred_deaths):.2f})")
+    
+    # ==========================================================================
+    # Figure 1: Coexistence Regions (2D slices)
+    # ==========================================================================
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig.suptitle("Phase 4: Coexistence Regions Across Parameter Space", fontsize=14, fontweight='bold')
+    
+    # Panel 1: prey_birth vs prey_death (averaged over pred params)
+    ax = axes[0, 0]
+    coex_grid = np.zeros((len(prey_deaths), len(prey_births)))
+    
+    for i, pd_val in enumerate(prey_deaths):
+        for j, pb_val in enumerate(prey_births):
+            subset = df[(df['prey_death'] == pd_val) & (df['prey_birth'] == pb_val)]
+            if len(subset) > 0:
+                # Coexistence = both prey and predator survive
+                coex_rate = ((subset['prey_survived'] == True) & (subset['pred_survived'] == True)).mean()
+                coex_grid[i, j] = coex_rate * 100
+    
+    im = ax.imshow(coex_grid, origin='lower', aspect='auto', cmap='RdYlGn',
+                   extent=[min(prey_births), max(prey_births), min(prey_deaths), max(prey_deaths)],
+                   vmin=0, vmax=100)
+    ax.set_xlabel('Prey Birth Rate', fontsize=12)
+    ax.set_ylabel('Prey Death Rate', fontsize=12)
+    ax.set_title('Coexistence Rate (%) - Prey vs Predator Params Averaged', fontsize=11)
+    ax.axhline(critical_prey_death, color='white', linestyle='--', linewidth=2, label=f'd*={critical_prey_death}')
+    ax.legend(loc='upper right', fontsize=9)
+    plt.colorbar(im, ax=ax, label='Coexistence %')
+    
+    # Panel 2: pred_birth vs pred_death (averaged over prey params)
+    ax = axes[0, 1]
+    coex_grid2 = np.zeros((len(pred_deaths), len(pred_births)))
+    
+    for i, pred_d in enumerate(pred_deaths):
+        for j, pred_b in enumerate(pred_births):
+            subset = df[(df['predator_death'] == pred_d) & (df['predator_birth'] == pred_b)]
+            if len(subset) > 0:
+                coex_rate = ((subset['prey_survived'] == True) & (subset['pred_survived'] == True)).mean()
+                coex_grid2[i, j] = coex_rate * 100
+    
+    im2 = ax.imshow(coex_grid2, origin='lower', aspect='auto', cmap='RdYlGn',
+                    extent=[min(pred_births), max(pred_births), min(pred_deaths), max(pred_deaths)],
+                    vmin=0, vmax=100)
+    ax.set_xlabel('Predator Birth Rate', fontsize=12)
+    ax.set_ylabel('Predator Death Rate', fontsize=12)
+    ax.set_title('Coexistence Rate (%) - Pred Params (Prey Averaged)', fontsize=11)
+    plt.colorbar(im2, ax=ax, label='Coexistence %')
+    
+    # Panel 3: Mean prey population across prey_death (sensitivity)
+    ax = axes[1, 0]
+    for pb in prey_births[::2]:  # Every other prey_birth for clarity
+        means = []
+        stds = []
+        for pd_val in prey_deaths:
+            subset = df[(df['prey_birth'] == pb) & (df['prey_death'] == pd_val)]
+            if len(subset) > 0:
+                means.append(subset['prey_mean'].mean())
+                stds.append(subset['prey_mean'].std())
+            else:
+                means.append(np.nan)
+                stds.append(np.nan)
+        ax.plot(prey_deaths, means, 'o-', label=f'pb={pb:.1f}', alpha=0.7)
+    
+    ax.axvline(critical_prey_death, color='red', linestyle='--', linewidth=2, label=f'd*={critical_prey_death}')
+    ax.set_xlabel('Prey Death Rate', fontsize=12)
+    ax.set_ylabel('Mean Prey Population', fontsize=12)
+    ax.set_title('Prey Population Sensitivity to prey_death', fontsize=11)
+    ax.legend(loc='upper right', fontsize=8, ncol=2)
+    ax.grid(True, alpha=0.3)
+    
+    # Panel 4: Mean predator population across prey_death
+    ax = axes[1, 1]
+    for pb in prey_births[::2]:
+        means = []
+        for pd_val in prey_deaths:
+            subset = df[(df['prey_birth'] == pb) & (df['prey_death'] == pd_val)]
+            if len(subset) > 0:
+                means.append(subset['pred_mean'].mean())
+            else:
+                means.append(np.nan)
+        ax.plot(prey_deaths, means, 'o-', label=f'pb={pb:.1f}', alpha=0.7)
+    
+    ax.axvline(critical_prey_death, color='red', linestyle='--', linewidth=2, label=f'd*={critical_prey_death}')
+    ax.set_xlabel('Prey Death Rate', fontsize=12)
+    ax.set_ylabel('Mean Predator Population', fontsize=12)
+    ax.set_title('Predator Population Sensitivity to prey_death', fontsize=11)
+    ax.legend(loc='upper right', fontsize=8, ncol=2)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_file1 = output_dir / "phase4_coexistence.png"
+    plt.savefig(output_file1, dpi=dpi)
+    plt.close()
+    logging.info(f"Saved {output_file1}")
+    
+    # ==========================================================================
+    # Figure 2: Hydra Effect Detection
+    # ==========================================================================
+    fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+    fig.suptitle("Phase 4: Hydra Effect Detection", fontsize=14, fontweight='bold')
+    
+    # Calculate dN/d(prey_death) for hydra effect detection
+    # Hydra effect: prey population INCREASES when prey mortality increases
+    
+    # Panel 1: Hydra effect heatmap
+    ax = axes[0, 0]
+    hydra_grid = np.zeros((len(prey_deaths)-1, len(prey_births)))
+    
+    for j, pb in enumerate(prey_births):
+        for i in range(len(prey_deaths)-1):
+            pd1, pd2 = prey_deaths[i], prey_deaths[i+1]
+            subset1 = df[(df['prey_birth'] == pb) & (df['prey_death'] == pd1)]
+            subset2 = df[(df['prey_birth'] == pb) & (df['prey_death'] == pd2)]
+            
+            if len(subset1) > 0 and len(subset2) > 0:
+                N1 = subset1['prey_mean'].mean()
+                N2 = subset2['prey_mean'].mean()
+                dN_dd = (N2 - N1) / (pd2 - pd1)
+                hydra_grid[i, j] = dN_dd
+    
+    # Positive values = hydra effect
+    vmax = np.nanpercentile(np.abs(hydra_grid), 95)
+    im = ax.imshow(hydra_grid, origin='lower', aspect='auto', cmap='RdBu_r',
+                   extent=[min(prey_births), max(prey_births), min(prey_deaths), max(prey_deaths[:-1])],
+                   vmin=-vmax, vmax=vmax)
+    ax.set_xlabel('Prey Birth Rate', fontsize=12)
+    ax.set_ylabel('Prey Death Rate', fontsize=12)
+    ax.set_title('dN/d(prey_death) - Red = Hydra Effect', fontsize=11)
+    ax.axhline(critical_prey_death, color='black', linestyle='--', linewidth=2)
+    plt.colorbar(im, ax=ax, label='dN/dd')
+    
+    # Panel 2: Hydra effect strength vs prey_birth
+    ax = axes[0, 1]
+    hydra_strength = []
+    for pb in prey_births:
+        col_idx = prey_births.index(pb)
+        hydra_vals = hydra_grid[:, col_idx]
+        # Max positive dN/dd = strongest hydra
+        max_hydra = np.nanmax(hydra_vals)
+        hydra_strength.append(max_hydra if max_hydra > 0 else 0)
+    
+    ax.bar(prey_births, hydra_strength, width=0.08, color='coral', edgecolor='black')
+    ax.set_xlabel('Prey Birth Rate', fontsize=12)
+    ax.set_ylabel('Max Hydra Effect Strength (dN/dd)', fontsize=12)
+    ax.set_title('Hydra Effect Strength by Prey Birth Rate', fontsize=11)
+    ax.axhline(0, color='black', linewidth=1)
+    ax.grid(True, alpha=0.3, axis='y')
+    
+    # Panel 3: Where does hydra effect occur? (prey_death values)
+    ax = axes[1, 0]
+    hydra_locations = []
+    for j, pb in enumerate(prey_births):
+        for i in range(len(prey_deaths)-1):
+            if hydra_grid[i, j] > 0:  # Positive = hydra effect
+                hydra_locations.append(prey_deaths[i])
+    
+    if hydra_locations:
+        ax.hist(hydra_locations, bins=20, color='coral', edgecolor='black', alpha=0.7)
+        ax.axvline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+                   label=f'Critical point ({critical_prey_death})')
+        ax.axvline(np.mean(hydra_locations), color='red', linestyle='-', linewidth=2,
+                   label=f'Mean hydra location ({np.mean(hydra_locations):.3f})')
+    ax.set_xlabel('Prey Death Rate', fontsize=12)
+    ax.set_ylabel('Frequency', fontsize=12)
+    ax.set_title('Distribution of Hydra Effect Locations', fontsize=11)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    
+    # Panel 4: Predator effect on hydra
+    ax = axes[1, 1]
+    # Check if hydra effect varies with predator parameters
+    for pred_b in pred_births[::2]:
+        hydra_by_pd = []
+        for pd_val in prey_deaths[:-1]:
+            subset = df[(df['predator_birth'] == pred_b) & (df['prey_death'] == pd_val)]
+            subset_next = df[(df['predator_birth'] == pred_b) & (df['prey_death'] == prey_deaths[prey_deaths.index(pd_val)+1])]
+            if len(subset) > 0 and len(subset_next) > 0:
+                dN = subset_next['prey_mean'].mean() - subset['prey_mean'].mean()
+                dd = prey_deaths[prey_deaths.index(pd_val)+1] - pd_val
+                hydra_by_pd.append(dN / dd)
+            else:
+                hydra_by_pd.append(np.nan)
+        ax.plot(prey_deaths[:-1], hydra_by_pd, 'o-', label=f'pred_b={pred_b:.1f}', alpha=0.7)
+    
+    ax.axhline(0, color='black', linewidth=1)
+    ax.axvline(critical_prey_death, color='red', linestyle='--', linewidth=2)
+    ax.set_xlabel('Prey Death Rate', fontsize=12)
+    ax.set_ylabel('dN/d(prey_death)', fontsize=12)
+    ax.set_title('Hydra Effect by Predator Birth Rate', fontsize=11)
+    ax.legend(fontsize=8, ncol=2)
+    ax.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    output_file2 = output_dir / "phase4_hydra_effect.png"
+    plt.savefig(output_file2, dpi=dpi)
+    plt.close()
+    logging.info(f"Saved {output_file2}")
+    
+    # ==========================================================================
+    # Figure 3: SOC Analysis (if evolution data present)
+    # ==========================================================================
+    if has_evolution:
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        fig.suptitle("Phase 4: Self-Organized Criticality Across Parameter Regimes", 
+                     fontsize=14, fontweight='bold')
+        
+        df_evo = df[df['evolved_prey_death_final'].notna()].copy()
+        
+        # Panel 1: Evolved prey_death vs initial prey_death (by pred_birth)
+        ax = axes[0, 0]
+        for pred_b in pred_births[::2]:
+            subset = df_evo[df_evo['predator_birth'] == pred_b]
+            if len(subset) > 0:
+                means = subset.groupby('prey_death')['evolved_prey_death_final'].mean()
+                ax.plot(means.index, means.values, 'o-', label=f'pred_b={pred_b:.1f}', alpha=0.7)
+        
+        ax.plot([0, max(prey_deaths)], [0, max(prey_deaths)], 'k:', label='y=x')
+        ax.axhline(critical_prey_death, color='green', linestyle='--', linewidth=2, 
+                   label=f'd*={critical_prey_death}')
+        ax.set_xlabel('Initial Prey Death Rate', fontsize=12)
+        ax.set_ylabel('Final Evolved Prey Death Rate', fontsize=12)
+        ax.set_title('SOC Test: Convergence by Predator Birth Rate', fontsize=11)
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 2: Distribution of final evolved values by pred_birth
+        ax = axes[0, 1]
+        for pred_b in pred_births[::2]:
+            subset = df_evo[df_evo['predator_birth'] == pred_b]
+            if len(subset) > 0:
+                ax.hist(subset['evolved_prey_death_final'], bins=15, alpha=0.5, 
+                        label=f'pred_b={pred_b:.1f}')
+        
+        ax.axvline(critical_prey_death, color='green', linestyle='--', linewidth=2)
+        ax.set_xlabel('Final Evolved Prey Death Rate', fontsize=12)
+        ax.set_ylabel('Frequency', fontsize=12)
+        ax.set_title('Distribution of Evolved Values by pred_birth', fontsize=11)
+        ax.legend(fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # Panel 3: Mean evolved prey_death vs predator parameters
+        ax = axes[1, 0]
+        evolved_by_pred = df_evo.groupby(['predator_birth', 'predator_death'])['evolved_prey_death_final'].mean()
+        evolved_grid = np.zeros((len(pred_deaths), len(pred_births)))
+        
+        for i, pred_d in enumerate(pred_deaths):
+            for j, pred_b in enumerate(pred_births):
+                if (pred_b, pred_d) in evolved_by_pred.index:
+                    evolved_grid[i, j] = evolved_by_pred[(pred_b, pred_d)]
+                else:
+                    evolved_grid[i, j] = np.nan
+        
+        im = ax.imshow(evolved_grid, origin='lower', aspect='auto', cmap='viridis',
+                       extent=[min(pred_births), max(pred_births), min(pred_deaths), max(pred_deaths)])
+        ax.set_xlabel('Predator Birth Rate', fontsize=12)
+        ax.set_ylabel('Predator Death Rate', fontsize=12)
+        ax.set_title('Mean Evolved prey_death by Predator Parameters', fontsize=11)
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Evolved prey_death')
+        
+        # Panel 4: Correlation between critical point and evolved value
+        ax = axes[1, 1]
+        # Group by all 4 params and compute mean evolved value
+        grouped = df_evo.groupby(['prey_birth', 'predator_birth', 'predator_death']).agg({
+            'evolved_prey_death_final': 'mean',
+            'prey_mean': 'mean'
+        }).reset_index()
+        
+        ax.scatter(grouped['evolved_prey_death_final'], grouped['prey_mean'], 
+                   alpha=0.5, s=30, c='steelblue')
+        ax.axvline(critical_prey_death, color='green', linestyle='--', linewidth=2,
+                   label=f'Critical d*={critical_prey_death}')
+        ax.set_xlabel('Mean Evolved Prey Death Rate', fontsize=12)
+        ax.set_ylabel('Mean Prey Population', fontsize=12)
+        ax.set_title('Population vs Evolved Trait Across Regimes', fontsize=11)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        output_file3 = output_dir / "phase4_soc_sensitivity.png"
+        plt.savefig(output_file3, dpi=dpi)
+        plt.close()
+        logging.info(f"Saved {output_file3}")
+    
+    # ==========================================================================
+    # Generate Summary Statistics
+    # ==========================================================================
+    summary = {
+        'n_simulations': len(df),
+        'parameters': {
+            'prey_birth': {'min': min(prey_births), 'max': max(prey_births), 'n': len(prey_births)},
+            'prey_death': {'min': min(prey_deaths), 'max': max(prey_deaths), 'n': len(prey_deaths)},
+            'predator_birth': {'min': min(pred_births), 'max': max(pred_births), 'n': len(pred_births)},
+            'predator_death': {'min': min(pred_deaths), 'max': max(pred_deaths), 'n': len(pred_deaths)},
+        },
+        'coexistence': {
+            'overall_rate': float(((df['prey_survived'] == True) & (df['pred_survived'] == True)).mean() * 100),
+            'prey_survival_rate': float((df['prey_survived'] == True).mean() * 100),
+            'pred_survival_rate': float((df['pred_survived'] == True).mean() * 100),
+        },
+        'hydra_effect': {
+            'detected': bool(len(hydra_locations) > 0) if hydra_locations else False,
+            'mean_location': float(np.mean(hydra_locations)) if hydra_locations else None,
+            'max_strength': float(np.nanmax(hydra_grid)) if np.any(hydra_grid > 0) else 0,
+        },
+        'has_evolution_data': has_evolution,
+    }
+    
+    if has_evolution:
+        summary['soc'] = {
+            'mean_evolved_prey_death': float(df_evo['evolved_prey_death_final'].mean()),
+            'std_evolved_prey_death': float(df_evo['evolved_prey_death_final'].std()),
+            'distance_from_critical': float(abs(df_evo['evolved_prey_death_final'].mean() - critical_prey_death)),
+        }
+    
+    summary_file = output_dir / "phase4_sensitivity_summary.json"
+    with open(summary_file, 'w') as f:
+        json.dump(summary, f, indent=2)
+    logging.info(f"Saved {summary_file}")
+    
+    # Log key findings
+    logging.info("Phase 4 Sensitivity Analysis Summary:")
+    logging.info(f"  Total simulations: {summary['n_simulations']}")
+    logging.info(f"  Overall coexistence rate: {summary['coexistence']['overall_rate']:.1f}%")
+    logging.info(f"  Hydra effect detected: {summary['hydra_effect']['detected']}")
+    if summary['hydra_effect']['mean_location']:
+        logging.info(f"  Mean hydra location: {summary['hydra_effect']['mean_location']:.4f}")
+    if has_evolution:
+        logging.info(f"  Mean evolved prey_death: {summary['soc']['mean_evolved_prey_death']:.4f}")
+        logging.info(f"  Distance from critical: {summary['soc']['distance_from_critical']:.4f}")
+    
+    return output_file1
+
+
 def generate_summary_report(grids: Dict, dN_dd_no_evo: np.ndarray, 
                             prey_births: np.ndarray, prey_deaths: np.ndarray,
                             output_dir: Path):
@@ -850,6 +1782,12 @@ Examples:
                        help='Generate only sensitivity analysis plots')
     parser.add_argument('--bifurcation-only', action='store_true',
                        help='Generate only bifurcation diagram')
+    parser.add_argument('--phase2-only', action='store_true',
+                       help='Generate only Phase 2 SOC analysis plots')
+    parser.add_argument('--phase3-only', action='store_true',
+                       help='Generate only Phase 3 FSS analysis plots')
+    parser.add_argument('--phase4-only', action='store_true',
+                       help='Generate only Phase 4 sensitivity analysis plots')
     parser.add_argument('--dpi', type=int, default=150,
                        help='Output resolution (default: 150)')
     parser.add_argument('--output', type=Path, default=None,
@@ -876,7 +1814,8 @@ Examples:
     
     # Determine what to plot
     plot_all = not any([args.phase_only, args.hydra_only, args.pcf_only,
-                        args.fss_only, args.sensitivity_only, args.bifurcation_only])
+                        args.fss_only, args.sensitivity_only, args.bifurcation_only,
+                        args.phase2_only, args.phase3_only, args.phase4_only])
     
     # Main sweep plots
     if plot_all or args.phase_only or args.hydra_only or args.pcf_only:
@@ -938,13 +1877,39 @@ Examples:
     # Bifurcation diagram
     if plot_all or args.bifurcation_only:
         try:
-            sweep_params, prey_results, predator_results = load_bifurcation_results(results_dir)
+            sweep_params, bifurc_results = load_bifurcation_results(results_dir)
             logging.info(f"Loaded bifurcation results: {len(sweep_params)} sweep values, "
-                        f"{prey_results.shape[1]} replicates each")
-            plot_bifurcation_diagram(sweep_params, prey_results, predator_results, 
-                                    output_dir, args.dpi)
+                        f"{bifurc_results.shape[1]} replicates each")
+            plot_bifurcation_diagram(sweep_params, bifurc_results, output_dir, args.dpi)
         except FileNotFoundError as e:
             logging.warning(f"Bifurcation results not found: {e}")
+    
+    # Phase 2: SOC analysis
+    if plot_all or args.phase2_only:
+        try:
+            phase2_results = load_phase2_results(results_dir)
+            logging.info(f"Loaded {len(phase2_results)} Phase 2 (SOC) results")
+            plot_phase2_soc_analysis(phase2_results, output_dir, args.dpi)
+        except FileNotFoundError as e:
+            logging.warning(f"Phase 2 results not found: {e}")
+    
+    # Phase 3: FSS analysis
+    if plot_all or args.phase3_only:
+        try:
+            phase3_results = load_phase3_results(results_dir)
+            logging.info(f"Loaded {len(phase3_results)} Phase 3 (FSS) results")
+            plot_phase3_fss_analysis(phase3_results, output_dir, args.dpi)
+        except FileNotFoundError as e:
+            logging.warning(f"Phase 3 results not found: {e}")
+    
+    # Phase 4: Sensitivity analysis
+    if plot_all or args.phase4_only:
+        try:
+            phase4_results = load_phase4_results(results_dir)
+            logging.info(f"Loaded {len(phase4_results)} Phase 4 (Sensitivity) results")
+            plot_phase4_sensitivity_analysis(phase4_results, output_dir, args.dpi)
+        except FileNotFoundError as e:
+            logging.warning(f"Phase 4 results not found: {e}")
     
     logging.info("Done!")
 
