@@ -105,8 +105,6 @@ For each system size, we aggregated all prey cluster sizes across replicates, fi
 
 The lognormal distribution describes a variable whose logarith is normally distributed:
 
-The lognormal distribution describes a variable whose logarithm is normally distributed:
-
 $$P(s) = \frac{1}{s \sigma \sqrt{2\pi}} \exp\left(-\frac{(\ln s - \mu)^2}{2\sigma^2}\right)$$
 
 where:
