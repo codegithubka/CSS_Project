@@ -226,7 +226,7 @@ def load_phase3_results(results_dir: Path) -> List[Dict]:
         raise FileNotFoundError(f"Phase 3 results not found in {results_dir}")
 
 
-def load_phase4_results(results_dir: Path) -> List[Dict]:
+def load_phase4_results(results_dir: Path, filename: str = "phase4_results.jsonl") -> List[Dict]:
     """
     Load Phase 4 (Global Sensitivity Analysis) results.
     
@@ -235,6 +235,13 @@ def load_phase4_results(results_dir: Path) -> List[Dict]:
     
     This tests the sensitivity of the hydra effect and critical point
     across different parameter regimes.
+    
+    Parameters
+    ----------
+    results_dir : Path
+        Directory containing the results file
+    filename : str, optional
+        Name of the JSONL file to load. Default is "phase4_results.jsonl"
     
     Returns
     -------
@@ -245,8 +252,8 @@ def load_phase4_results(results_dir: Path) -> List[Dict]:
         - prey_survived, pred_survived: survival indicators
         - evolved_prey_death_final (if evolution enabled): final evolved trait
     """
-    jsonl_file = results_dir / "phase4_results.jsonl"
-    json_file = results_dir / "phase4_results.json"
+    jsonl_file = results_dir / filename
+    json_file = results_dir / filename.replace(".jsonl", ".json")
     
     if jsonl_file.exists():
         logging.info(f"Loading Phase 4 results from {jsonl_file}")
@@ -261,7 +268,7 @@ def load_phase4_results(results_dir: Path) -> List[Dict]:
         with open(json_file, 'r') as f:
             return json.load(f)
     else:
-        raise FileNotFoundError(f"Phase 4 results not found in {results_dir}")
+        raise FileNotFoundError(f"Phase 4 results not found: {jsonl_file} or {json_file}")
 
 
 # =============================================================================
