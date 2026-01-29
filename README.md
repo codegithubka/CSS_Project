@@ -1,6 +1,6 @@
-# Predator-Prey Cellular Automaton: Model Documentation
+## Predator-Prey Cellular Automaton: Model Documentation
 
-## Overview
+### Overview
 
 This project impelments a spatial predator-prey cellular automaton (CA) to investigate the Hydra effect, a counterintuitive ecological phenomenon where increased prey mortality paradoxically leads to higher prey population densities. The model explores the rise of emergent population dynamics through spatial structure and local interactions that differe fundemntally from well-mixed (mean-field) predictions.
 
@@ -8,9 +8,9 @@ The codebase uses Numba JIT compilation for computationally intensive kernels an
 
 ---
 
-## Background
+### Background
 
-### The Hydra Effect
+#### The Hydra Effect
 
 In classical Lotka-Volterra dynamics, increasing prey mortality always reduces the prey population. However, theoretical work has identified conditions where the opposite effect can be observed. The Hydra effect emerges in spatially structured systems where
 
@@ -20,7 +20,7 @@ In classical Lotka-Volterra dynamics, increasing prey mortality always reduces t
 
 This study uses a cellular automaton framework toi study how spatial strcuture generates the Hydra effecr and whether the system exhibits signatures of self-organized criticality at the transition point.
 
-### Self-Organized Criticality (SOC)
+#### Self-Organized Criticality (SOC)
 
 SOC refers to systems that naturally evolve toward a critical state without external tuning. At criticality, such systems exhibit:
 
@@ -33,9 +33,7 @@ In the predator-prey context, SOC would manifest as the system self-tuning towar
 
 ---
 
-## Model Description
-
-### State Space
+### Model Description
 
 The model uses a 2D lattice with periodic boundary conditions. Each cell occupies one of three states:
 
@@ -45,25 +43,17 @@ The model uses a 2D lattice with periodic boundary conditions. Each cell occupie
 | Prey | 1 | Prey organism |
 | Predator | 2 | Predator organism |
 
-### Transition Rules
-
 The model uses asynchronous updates: cells are processed in random order each timestep, with state changes taking effect immediately. This prevents artificial synchronization artifacts common in parallel update schemes.
-
-#### Prey Dynamics
 
 For each prey cell, in order:
 
 - Death: With probability `prey_death`, the prey dies and the cell becomes empty
 - Reproduction: If alive and a randomly selected neighbor is empty, with probability `prey_birth`, a new prey is placed in that neighbor cell
 
-#### Predator Dynamics
-
 For each predator cell, in order:
 
 - Death: With probability `predator_death`, the predator dies (starvation)
 - Hunting/Reproduction: If alive and a randomly selected neighbor contains prey, with probability `predator_birth`, the predator consumes the prey and reproduces into that cell
-
-### Neighborhood
 
 The model supports both neighborhood types:
 
@@ -74,11 +64,11 @@ Moore neighborhoods are used throughout the experiments as they provide more rea
 
 ---
 
-## Hunting Modes
+### Hunting Modes
 
 The model implements two distinct neighbor selection strategies that qualitatively affect dynamics.
 
-### Random Neighbor Selection (Default)
+#### Random Neighbor Selection (Default)
 
 In the standard mode, each organism selects a single random neighbor for interaction:
 
@@ -94,7 +84,7 @@ if grid[neighbor] == PREY and random() < predator_birth:
 ```
 This creates a blind interaction model where organisms are not aware of their surroundings.
 
-### Directed Hunting Mode
+#### Directed Hunting Mode
 
 The directed mode implements "intelligent" neighbor selection:
 
@@ -119,9 +109,9 @@ This increases the effective reproduction and predation rates without changing t
 
 ---
 
-## Implementation Architecture
+### Implementation Architecture
 
-### Class Hierarchy
+#### Class Hierarchy
 
 ```
 CA (base class)
@@ -140,7 +130,7 @@ The `PP` class adds:
 - Synchronous/asynchronous update dispatch
 - Integration with Numba-optimized kernels
 
-### Basic Usage
+#### Basic Usage
 
 ```python
 from models.CA import PP
@@ -170,7 +160,7 @@ prey_count = np.sum(model.grid == 1)
 pred_count = np.sum(model.grid == 2)
 ```
 
-### Evolution Mode
+#### Evolution Mode
 
 The model supports per-cell parameter evolution, where offspring inherit (with mutation) their parent's parameter values:
 
@@ -188,9 +178,7 @@ When evolution is enabled, each prey cell maintains its own `prey_death` value. 
 
 ---
 
-## Numba Optimization
-
-### Performance Strategy
+### Numba Optimization
 
 The computational bottleneck is the update kernel, which must process every occupied cell each timestep. For a 1000×1000 grid with 50% occupancy, this means ~500,000 cell updates per step.
 
@@ -201,7 +189,7 @@ Key optimizations:
 3. **Efficient Shuffling**: Fisher-Yates shuffle implemented in Numba for random cell ordering
 4. **Cell Lists for PCF**: Pair correlation functions use spatial hashing for O(N) instead of O(N²) complexity
 
-### PPKernel Class
+#### PPKernel Class
 
 ```python
 class PPKernel:
@@ -223,8 +211,6 @@ class PPKernel:
 ```
 ---
 
-## Analysis Methods
-
 ### Cluster Detection
 
 Clusters are contiguous groups of same-species cells (using Moore connectivity). The implementation uses stack-based flood fill with periodic boundary conditions.
@@ -241,65 +227,9 @@ print(f"Largest fraction: {stats['largest_fraction']:.3f}")
 Metrics collected:
 - Cluster size distribution: Power-law indicates criticality
 - Largest cluster fraction: Order parameter for percolation transition
-
 ---
 
-## Experimental Phases
-
-The project is organized into five experimental phases, each investigating a specific aspect of the Hydra effect and SOC.
-
-### Phase 1: Critical Point Identification
-
-**Goal**: Locate the critical prey mortality rate where the Hydra effect transitions occur.
-
-**Method**: Sweep `prey_death` while holding other parameters fixed. Measure:
-- Mean prey/predator populations
-- Population variance
-- Cluster size distributions
-
-**Output**: Critical value of `prey_death` for subsequent phases.
-
-### Phase 2: Self-Organization Analysis
-
-**Goal**: Test whether evolution drives the system toward criticality.
-
-**Method**: Enable per-cell evolution of `prey_death` with small mutation rates. Track:
-- Mean evolved `prey_death` over time
-- Convergence toward critical value
-- Population stability under evolution
-
-**Expected**: If SOC holds, evolved parameters should cluster near a critical point.
-
-### Phase 3: Finite-Size Scaling
-
-**Goal**: Confirm criticality through scaling relations.
-
-**Method**: Run simulations at the critical point across multiple grid sizes (50 to 2500). Measure how observables scale with system size $L$:
-- Largest cluster: $S_{max} \sim L^{d_f}$ (fractal dimension)
-
-**Output**: Critical exponents characterizing the universality class.
-
-### Phase 4: Sensitivity Analysis
-
-**Goal**: Map the full parameter space to understand robustness.
-
-**Method**: 4D sweep over all four parameters (```prey_birth, prey_death, predator_birth, predator_death```). Identify:
-- Coexistence regions
-- Extinction boundaries
-- Hydra effect strength across parameter space
-
-### Phase 5: Model Extensions
-
-**Goal**: Compare random vs. directed hunting dynamics.
-
-**Method**: Repeat Phase 4 analysis with `directed_hunting=True`. Compare:
-- Critical point location
-- Hydra effect persistence
-- SOC signatures
-
----
-
-## Configuration System
+### Configuration System
 
 The `Config` dataclass centralizes all experimental parameters:
 
@@ -328,7 +258,7 @@ Each phase has a predefined configuration (`PHASE1_CONFIG` through `PHASE5_CONFI
 
 ---
 
-## Output Format
+### Output Format
 
 Results are saved in JSONL format (one JSON object per line) for efficient streaming and parallel processing:
 
@@ -348,7 +278,7 @@ Metadata files (`phase{N}_metadata.json`) accompany each results file with confi
 
 ---
 
-## Dependencies
+### Dependencies
 
 **Required:**
 - Python 3.8+
@@ -360,24 +290,6 @@ Metadata files (`phase{N}_metadata.json`) accompany each results file with confi
 **Optional:**
 - matplotlib (visualization)
 - scipy (additional analysis)
-
----
-
-## File Structure
-
-```
-models/
-├── CA.py                 # Base CA and PP classes
-├── numba_optimized.py    # Numba kernels and analysis functions
-├── config.py             # Configuration dataclass and phase configs
-└── experiments.py        # Experimental phase runners
-
-results/
-├── phase1_results.jsonl  # Raw simulation results
-├── phase1_config.json    # Configuration used
-├── phase1_metadata.json  # Runtime metadata
-└── experiments.log       # Execution log
-```
 
 ---
 
