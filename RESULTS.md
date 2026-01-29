@@ -1,4 +1,4 @@
-### Experimental Results
+## Experimental Results
 
 This document summarizes the key findings from the predator-prey cellular automaton experiments exploring the Hydra effect and self-organized criticality.
 
@@ -36,7 +36,7 @@ The bifurication diagrams reveals a clear Hydra effect; increasing prey mortalit
 
 The prey cluster size distributions were analyzed at the transition point to test for SOC. SOC theory predicts a power law distribution.
 
-![Cluster Size Distribution](/Users/kimonanagnostopoulos/CSS_Project/images/criticality_phase1.png)
+![Cluster Size Distribution](images/criticality_phase1.png)
 
 The log-log plot shows the probability distribution of prey cluster sizes at the critical point. Visual inspection suggests approximate power law scaling with $$\alpha \approx 2.29$$. 
 
@@ -66,7 +66,7 @@ Test whether predator-prey system exhibits SOC by allowing prey mortality rates 
 
 We enabled per-cell evolution of the prey death parameter. Each prey individual carries its own ```prey_death_rate``` value. The offsprings inherit their parents value with Gaussian mutation. Evolution occurs during the warmup steps, then frozen for the measurement.
 
-![Evolution Convergence](/Users/kimonanagnostopoulos/CSS_Project/images/evo_plot.png)
+![Evolution Convergence](images/evo_plot.png)
 
 **Right panel**: The evolved prey death rate as a function of initial prey death rate.
 
@@ -117,7 +117,7 @@ The lognormal parameters were fitted using `scipy.stats.lognorm.fit()` with loca
 
 ---
 
-![Finite-Size Scaling](/Users/kimonanagnostopoulos/CSS_Project/images/fss_phase3.png)
+![Finite-Size Scaling](images/fss_phase3.png)
 
 The figure shows prey cluster size distributions at the critical point across all system sizes with lognormal fit parameters and likelihood ratios.
 
@@ -171,23 +171,23 @@ The quadratic coefficient $a$ captures how sharply the prey density rises and fa
 
 ### Results: Undirected Hunting (Phase 4)
 
-![Hydra Curves Undirected](/Users/kimonanagnostopoulos/CSS_Project/images/hyrda_fitting_plot.png)
+![Hydra Curves Undirected](images/hyrda_fitting_plot.png)
 
 **Left panel**: All parameter combinations exhibiting the Hydra effect.
 **Right panel**: Curves truncated at the maximum derivative point, isolating the rising (Hydra) portion. Color indicates the maximum positive derivative—darker blue corresponds to steeper initial increases.
 
-![3D Heatmap Undirected](/Users/kimonanagnostopoulos/CSS_Project/images/cube_phase4.png)
+![3D Heatmap Undirected](images/cube_phase4.png)
 
 The 3D voxel plots show Hydra effect strength (quadratic coefficient) across the parameter space.
 
-![Quadratic Coefficient Undirected](/Users/kimonanagnostopoulos/CSS_Project/images/coeffs_phase4.png)
+![Quadratic Coefficient Undirected](images/coeffs_phase4.png)
 
 **Left panel (Strong Hydra, coef > 15)**: Sharp, pronounced peaks with prey density increasing from ~0.3–0.6 to ~0.7–0.8 before collapsing.
 **Right panel (Moderate Hydra, coef 5–10)**: Gentler curves with broader peaks. The Hydra effect is present but less dramatic.
 
 ### Results: Directed Hunting (Phase 6)
 
-![3D Heatmap Directed](/Users/kimonanagnostopoulos/CSS_Project/images/cube_phase6.png)
+![3D Heatmap Directed](images/cube_phase6.png)
 
 The same analysis with directed hunting enabled reveals a dramatically different pattern.
 
@@ -199,7 +199,7 @@ The same analysis with directed hunting enabled reveals a dramatically different
 
 3. **More concentrated**: The effect is stronger where it occurs but may be more restricted in parameter space
 
-![Quadratic Coefficient Directed](/Users/kimonanagnostopoulos/CSS_Project/images/coeffs_phase6.png)
+![Quadratic Coefficient Directed](images/coeffs_phase6.png)
 
 **Left panel (Strong Hydra, coef > 15)**: Extremely sharp peaks with quadratic coefficients reaching 49–98. However, the curves are notably noisier than the undirected case, with irregular trajectories.
 **Right panel (Moderate Hydra, coef 5–10)**: More variable behavior compared to undirected hunting. Some curves show multiple peaks or irregular shapes.
