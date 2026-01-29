@@ -22,5 +22,5 @@ run_single_simulation(0.2, 0.05, 150, 42, True, cfg)
 profiler.disable()
 
 # 3. Print the top 15 time-consumers
-stats = pstats.Stats(profiler).sort_stats('tottime')
+stats = pstats.Stats(profiler).sort_stats("tottime")
 stats.print_stats(15)

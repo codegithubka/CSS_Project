@@ -184,6 +184,7 @@ class MeanFieldModel:
             "net_growth": self.birth - d_r_values,
         }
 
+
 if __name__ == "__main__":
     print("Mean-Field Model Module")
     mf = MeanFieldModel()
