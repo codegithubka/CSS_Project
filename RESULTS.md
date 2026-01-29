@@ -17,7 +17,7 @@ grid_size = 1000
 ```
 Each simulation ran for 1000 warmup steps followed by 1000 measurement steps. The mean populations and cluster statiustics were recorded on the final grid states.
 
-![Bifurcation Diagram](/Users/kimonanagnostopoulos/CSS_Project/images/bifurication.png)
+![Bifurcation Diagram](images/bifurication.png)
 
 The bifurication diagrams reveals a clear Hydra effect; increasing prey mortality leads to increasing prey population.
 
@@ -169,7 +169,7 @@ $$\rho(d_1) = a \cdot d_1^2 + b \cdot d_1 + c$$
 
 The quadratic coefficient $a$ captures how sharply the prey density rises and falls. Larger $|a|$ indicates a more pronounced Hydra effect with sharper peak. This apporach filters to only the Hydra effect portion, captures curvature, and provides a single scalar metric for comparison across parameter space.
 
-### Results: Undirected Hunting (Phase 4)
+#### Results: Undirected Hunting (Phase 4)
 
 ![Hydra Curves Undirected](images/hyrda_fitting_plot.png)
 
@@ -185,7 +185,7 @@ The 3D voxel plots show Hydra effect strength (quadratic coefficient) across the
 **Left panel (Strong Hydra, coef > 15)**: Sharp, pronounced peaks with prey density increasing from ~0.3–0.6 to ~0.7–0.8 before collapsing.
 **Right panel (Moderate Hydra, coef 5–10)**: Gentler curves with broader peaks. The Hydra effect is present but less dramatic.
 
-### Results: Directed Hunting (Phase 6)
+#### Results: Directed Hunting (Phase 6)
 
 ![3D Heatmap Directed](images/cube_phase6.png)
 
