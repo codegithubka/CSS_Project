@@ -1,2 +1,2 @@
-from .mean_field import MeanFieldModel
+from ..misc.mean_field import MeanFieldModel
 from .CA import CA, PP

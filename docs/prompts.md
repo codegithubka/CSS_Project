@@ -674,19 +674,3 @@ Add graphs underneath the imshow plots to show the simulation state over time. F
 Also create a separate plot left of the states grid plot that shows the distribution of prey neighbors for each prey. I want a histogram showing the amount of prey with each possible prey neighbor count (for moore this is 8). Below that, add a graph showing the 25%, the mean, and the 75% value for the neighbor count.
 
 Lastly, add functionality to stop evolution after a certain time-step. This should be an optional argument to the run function. Also add a function to create snapshots of the histogram, states grid, and cell parameters grids. As these are snapshots, the graphs below these plots should not be included. Add another argument to the run function, which is a list of the iterations to create snapshots at. Save these snapshots to the results folder, where each run should have its own folder with snapshots. Make sure the snapshot file names include the iteration.
-
-### Mean Field class
-
-1. Create a baseline mean-field class based on the attached research paper on predator-prey dynamics. The class should adhere to the papers specifications. The class should have a parameter sweep method for key predator and prey parameters that will be run in Snellius. Also include a method for equilibrium analysis. Make sure to justify the logic for this method. Include docstrings with a small method description and comments for code interpretability.
-
-2. Justify initialization parameter values for a small test expiriment. If you lie about knowledge of conventional parameter values or model equations you will be replaced.
-
-3. Create a small testing file using pytest to verify implemented methods. Make sure to cover edge cases and list them after the .py file output for me please. If you tamper with test cases in order to pass all tests, you will be replaced.
-
-4. We are now ready to plot some of the results of the mean fielf baseline. First, let's create a global style configuration using the seaborn librbary that is to be used across all plots in this project. Make sure the legend is at the bottom of each plot.
-
-5. Plot the phase portait to confirm the system spiral into a stable point. Show the nullclines as well. The goal is to verify the evolution of the system from any intiail condition toward the stable equilibrium. 
-
-6. Create a time series analysis plot of the evolution of prey and predator density vs. time. Make sure enough time steps all visible to see how the system eventually stabilizes.
-
-7. Create a bifuracation diagram to confirm the monotonic relationship for a varying prey death rate vs. equilibrium density. 

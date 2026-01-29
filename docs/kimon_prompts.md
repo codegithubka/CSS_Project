@@ -368,3 +368,8 @@ For parallel simulations, use different seeds per worker (e.g., base_seed + work
 ## Refactoring Main Experiment Script
 
 Help me create a skeletal version of the updated experiments script for HPC that meets tha phase requirements outlined. The config class has been migrated to config.py. 
+
+
+## Data Post-processing
+
+Help me load and parse the data according to job and experimental phase number. The data will be analyzed in a jupyter notebook rather than a py file for usability.

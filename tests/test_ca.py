@@ -8,7 +8,9 @@ from models.CA import CA, PP
 def test_initialization_and_grid_filling():
     rows, cols = 10, 10
     densities = (0.2, 0.1)
-    ca = CA(rows, cols, densities, neighborhood="moore", params={}, cell_params={}, seed=42)
+    ca = CA(
+        rows, cols, densities, neighborhood="moore", params={}, cell_params={}, seed=42
+    )
     assert ca.grid.shape == (rows, cols)
     assert ca.n_species == len(densities)
     total_cells = rows * cols
@@ -37,7 +39,15 @@ def test_invalid_parameters_raise():
 
     # PP: params must be a dict or None
     with pytest.raises(TypeError):
-        PP(rows=5, cols=5, densities=(0.2, 0.1), neighborhood="moore", params="bad", cell_params=None, seed=1)
+        PP(
+            rows=5,
+            cols=5,
+            densities=(0.2, 0.1),
+            neighborhood="moore",
+            params="bad",
+            cell_params=None,
+            seed=1,
+        )
 
 
 def test_neighborhood_counting():
@@ -49,7 +59,16 @@ def test_neighborhood_counting():
     # counts is a tuple with one array (state 1)
     neigh = counts[0]
     # all 8 neighbors of center should have count 1
-    expected_positions = [(0, 0), (0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2)]
+    expected_positions = [
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (1, 0),
+        (1, 2),
+        (2, 0),
+        (2, 1),
+        (2, 2),
+    ]
     for r in range(3):
         for c in range(3):
             if (r, c) in expected_positions:
@@ -61,7 +80,15 @@ def test_neighborhood_counting():
 
 def test_validate_detects_cell_params_shape_and_nonnan_mismatch():
     # create a PP and enable evolution for a parameter
-    pp = PP(rows=5, cols=5, densities=(0.2, 0.1), neighborhood="moore", params=None, cell_params=None, seed=2)
+    pp = PP(
+        rows=5,
+        cols=5,
+        densities=(0.2, 0.1),
+        neighborhood="moore",
+        params=None,
+        cell_params=None,
+        seed=2,
+    )
     pp.evolve("prey_death", sd=0.01, min_val=0.0, max_val=1.0)
 
     # wrong shape should raise informative ValueError via validate()
@@ -86,7 +113,15 @@ def test_extinction_when_death_one():
         "prey_birth": 0.0,
         "predator_birth": 0.0,
     }
-    pp = PP(rows=10, cols=10, densities=(0.2, 0.1), neighborhood="moore", params=params, cell_params=None, seed=3)
+    pp = PP(
+        rows=10,
+        cols=10,
+        densities=(0.2, 0.1),
+        neighborhood="moore",
+        params=params,
+        cell_params=None,
+        seed=3,
+    )
     pp.run(1)
     # no prey or predators should remain
     assert np.count_nonzero(pp.grid != 0) == 0
@@ -99,7 +134,15 @@ def test_predators_dominate_with_high_birth_and_zero_predator_death():
         "prey_birth": 1.0,
         "predator_birth": 1.0,
     }
-    pp = PP(rows=10, cols=10, densities=(0.1, 0.05), neighborhood="moore", params=params, cell_params=None, seed=4)
+    pp = PP(
+        rows=10,
+        cols=10,
+        densities=(0.1, 0.05),
+        neighborhood="moore",
+        params=params,
+        cell_params=None,
+        seed=4,
+    )
     # run longer to allow predators to consume prey; expect prey extinction
     pp.run(200)
     after_prey = int(np.count_nonzero(pp.grid == 1))
