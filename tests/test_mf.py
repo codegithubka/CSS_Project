@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from models.mean_field import MeanFieldModel
+from misc.mean_field import MeanFieldModel
 
 
 @pytest.fixture

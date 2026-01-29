@@ -2,7 +2,7 @@
 """
 Numba-optimized kernels for predator-prey cellular automaton.
 
-ENHANCED VERSION: Added full cluster detection with labels + percolation detection.
+Added full cluster detection with labels 
 
 Key additions:
 - detect_clusters_fast(): Returns (labels, sizes_dict) like Hoshen-Kopelman

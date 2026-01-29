@@ -196,7 +196,7 @@ The computational bottleneck is the update kernel, which must process every occu
 
 Key optimizations:
 
-1. **JIT Compilation**: Core kernels use `@njit(cache=True)` for ahead-of-time compilation
+- **JIT Compilation**: Core kernels use `@njit(cache=True)` for ahead-of-time compilation
 2. **Pre-allocated Buffers**: The `PPKernel` class maintains reusable arrays to avoid allocation overhead
 3. **Efficient Shuffling**: Fisher-Yates shuffle implemented in Numba for random cell ordering
 4. **Cell Lists for PCF**: Pair correlation functions use spatial hashing for O(N) instead of O(N²) complexity
@@ -221,19 +221,6 @@ class PPKernel:
             self._dr = np.array([-1, 1, 0, 0], dtype=np.int32)
             self._dc = np.array([0, 0, -1, 1], dtype=np.int32)
 ```
-
-### Benchmark Performance
-
-On typical hardware, the optimized kernels achieve:
-
-| Grid Size | Random Kernel | Directed Kernel | Overhead |
-|-----------|---------------|-----------------|----------|
-| 100×100 | ~0.8 ms/step | ~1.2 ms/step | +50% |
-| 500×500 | ~20 ms/step | ~35 ms/step | +75% |
-| 1000×1000 | ~85 ms/step | ~150 ms/step | +75% |
-
-The directed kernel is slower due to the two-pass neighbor scanning (count targets, then select).
-
 ---
 
 ## Analysis Methods
@@ -251,40 +238,15 @@ print(f"Largest cluster: {stats['largest']} cells")
 print(f"Largest fraction: {stats['largest_fraction']:.3f}")
 ```
 
-Key metrics:
-- **Cluster size distribution**: Power-law indicates criticality
-- **Largest cluster fraction**: Order parameter for percolation transition
-- **Percolation**: Whether any cluster spans the grid
-
-### Pair Correlation Function (PCF)
-
-The PCF $g(r)$ measures spatial clustering as a function of distance:
-
-$$g(r) = \frac{\text{observed pairs at distance } r}{\text{expected pairs (random)}}$$
-
-- $g(r) > 1$: Clustering (more pairs than random)
-- $g(r) = 1$: Random distribution
-- $g(r) < 1$: Repulsion (fewer pairs than random)
-
-Three PCFs are computed:
-- **Prey-Prey**: Intraspecific prey clustering
-- **Predator-Predator**: Intraspecific predator clustering  
-- **Prey-Predator**: Interspecific spatial relationship
-
-The cell-list algorithm provides O(N) computation instead of naive O(N²).
-
-### Population Time Series
-
-Beyond static snapshots, the experiments collect population trajectories to analyze:
-- **Variance**: Fluctuation amplitude scales with system size at criticality
-- **Autocorrelation**: Decay time increases near critical point (critical slowing down)
-- **Power spectrum**: 1/f noise indicates SOC
+Metrics collected:
+- Cluster size distribution: Power-law indicates criticality
+- Largest cluster fraction: Order parameter for percolation transition
 
 ---
 
 ## Experimental Phases
 
-The project is organized into six experimental phases, each investigating a specific aspect of the Hydra effect and SOC.
+The project is organized into five experimental phases, each investigating a specific aspect of the Hydra effect and SOC.
 
 ### Phase 1: Critical Point Identification
 
@@ -306,7 +268,7 @@ The project is organized into six experimental phases, each investigating a spec
 - Convergence toward critical value
 - Population stability under evolution
 
-**Expected**: If SOC holds, evolved parameters should cluster near the critical point.
+**Expected**: If SOC holds, evolved parameters should cluster near a critical point.
 
 ### Phase 3: Finite-Size Scaling
 
@@ -314,8 +276,6 @@ The project is organized into six experimental phases, each investigating a spec
 
 **Method**: Run simulations at the critical point across multiple grid sizes (50 to 2500). Measure how observables scale with system size $L$:
 - Largest cluster: $S_{max} \sim L^{d_f}$ (fractal dimension)
-- Fluctuations: $\sigma \sim L^{\gamma/\nu}$
-- Correlation length: Should equal system size at criticality
 
 **Output**: Critical exponents characterizing the universality class.
 
@@ -323,23 +283,12 @@ The project is organized into six experimental phases, each investigating a spec
 
 **Goal**: Map the full parameter space to understand robustness.
 
-**Method**: 4D sweep over all four parameters (prey_birth, prey_death, predator_birth, predator_death). Identify:
+**Method**: 4D sweep over all four parameters (```prey_birth, prey_death, predator_birth, predator_death```). Identify:
 - Coexistence regions
 - Extinction boundaries
 - Hydra effect strength across parameter space
 
-### Phase 5: Perturbation Analysis
-
-**Goal**: Measure critical slowing down near the transition.
-
-**Method**: At various distances from the critical point, apply population perturbations and measure:
-- Recovery time
-- Autocorrelation decay
-- Variance amplification
-
-**Expected**: Recovery time diverges as critical point is approached.
-
-### Phase 6: Model Extensions
+### Phase 5: Model Extensions
 
 **Goal**: Compare random vs. directed hunting dynamics.
 
@@ -375,7 +324,7 @@ print(f"Grid: {cfg.grid_size}x{cfg.grid_size}")
 print(f"Estimate: {cfg.estimate_runtime(n_cores=32)}")
 ```
 
-Each phase has a predefined configuration (`PHASE1_CONFIG` through `PHASE6_CONFIG`) with appropriate defaults for that analysis.
+Each phase has a predefined configuration (`PHASE1_CONFIG` through `PHASE5_CONFIG`) with appropriate defaults for that analysis.
 
 ---
 
@@ -392,7 +341,6 @@ Each result dictionary contains:
 - Input parameters
 - Final population counts
 - Cluster statistics
-- PCF data (if collected)
 - Evolution statistics (if enabled)
 - Time series (if enabled)
 
@@ -434,9 +382,3 @@ results/
 ---
 
 ## References
-
-1. Abrams, P. A. (2009). When does greater mortality increase population size? The long history and diverse mechanisms underlying the hydra effect. *Ecology Letters*, 12(5), 462-474.
-
-2. Bak, P., Tang, C., & Wiesenfeld, K. (1987). Self-organized criticality: An explanation of the 1/f noise. *Physical Review Letters*, 59(4), 381.
-
-3. de Aguiar, M. A. M., Rauch, E. M., & Bar-Yam, Y. (2004). Invasion and extinction in the mean field approximation for a spatial host-pathogen model. *Journal of Statistical Physics*, 114(5), 1417-1451.
