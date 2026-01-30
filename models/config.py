@@ -15,45 +15,6 @@ Usage:
     
     # Or modify existing
     cfg = Config(**{**asdict(PHASE1_CONFIG), 'n_replicates': 30})
-    
-    
-    
-NOTE: Saving snapshots of the grid can be implemented with the following logic:
-
-    final_grid: cluster analysis verfication for every n_stps.
-    
-    For Phase 3, save fro all grif sizes
-    
-    Add to config:
-        save_final_grid: bool = False
-        save_grid_timeseries: bool = False  # Very costly, use sparingly
-        grid_timeseries_subsample: int = N  # Save every N steps
-        snapshot_sample_rate: float = 0.0X  # Only X% of runs save snapshots
-        
-    For run_single_simulation():
-        # After cluster analysis
-        if cfg.save_final_grid:
-        # Only save for a sample of runs 
-        if np.random.random() < cfg.snapshot_sample_rate:
-            result["final_grid"] = model.grid.tolist()  # JSON-serializable
-
-        # For grid timeseries (use very sparingly):
-        if cfg.save_grid_timeseries:
-            grid_snapshots = []
-            
-        # Inside measurement loop:
-        if cfg.save_grid_timeseries and step % cfg.grid_timeseries_subsample == 0:
-            grid_snapshots.append(model.grid.copy())
-
-        # After loop:
-        if cfg.save_grid_timeseries and grid_snapshots:
-            # Save separately to avoid bloating JSONL
-            snapshot_path = output_dir / f"snapshots_{seed}.npz"
-            np.savez_compressed(snapshot_path, grids=np.array(grid_snapshots))
-            result["snapshot_file"] = str(snapshot_path)
-        
-        
-    OR create separate snapshot runs using some sort of SNAPSHOT_CONFIG.
 """
 
 from dataclasses import dataclass, field, asdict
@@ -63,7 +24,86 @@ import numpy as np
 
 @dataclass
 class Config:
-    """Central configuration for all experiments."""
+    """
+    Central configuration for Predator-Prey Hydra Effect experiments.
+
+    This dataclass aggregates all hyperparameters, grid settings, and 
+    experimental phase definitions. It includes helper methods for 
+    parameter sweep generation and runtime estimation.
+
+    Attributes
+    ----------
+    grid_size : int, default 1000
+        The side length of the square simulation grid.
+    densities : Tuple[float, float], default (0.30, 0.15)
+        Initial population fractions for (prey, predator).
+    grid_sizes : Tuple[int, ...], default (50, 100, 250, 500, 1000, 2500)
+        Grid dimensions used for Finite-Size Scaling (FSS) analysis.
+    prey_birth : float, default 0.2
+        Default global birth rate for the prey species.
+    prey_death : float, default 0.05
+        Default global death rate for the prey species.
+    predator_birth : float, default 0.8
+        Default global birth rate for the predator species.
+    predator_death : float, default 0.05
+        Default global death rate for the predator species.
+    critical_prey_birth : float, default 0.20
+        Identified critical birth rate for prey (Phase 1 result).
+    critical_prey_death : float, default 0.947
+        Identified critical death rate for prey (Phase 1 result).
+    prey_death_range : Tuple[float, float], default (0.0, 0.2)
+        Bounds for the prey death rate sweep in Phase 1.
+    n_prey_birth : int, default 15
+        Number of points along the prey birth rate axis for sweeps.
+    n_prey_death : int, default 5
+        Number of points along the prey death rate axis for sweeps.
+    predator_birth_values : Tuple[float, ...]
+        Discrete predator birth rates used for sensitivity analysis.
+    predator_death_values : Tuple[float, ...]
+        Discrete predator death rates used for sensitivity analysis.
+    prey_death_offsets : Tuple[float, ...]
+        Delta values applied to critical death rates for perturbation tests.
+    n_replicates : int, default 15
+        Number of independent stochastic runs per parameter set.
+    warmup_steps : int, default 300
+        Iterations to run before beginning data collection.
+    measurement_steps : int, default 500
+        Iterations spent collecting statistics after warmup.
+    with_evolution : bool, default False
+        Toggle for enabling per-cell parameter mutation.
+    evolve_sd : float, default 0.10
+        Standard deviation for parameter mutation (Gaussian).
+    evolve_min : float, default 0.0
+        Lower bound clamp for evolving parameters.
+    evolve_max : float, default 0.10
+        Upper bound clamp for evolving parameters.
+    sensitivity_sd_values : Tuple[float, ...]
+        Range of mutation strengths tested in sensitivity phases.
+    synchronous : bool, default False
+        If True, use synchronous grid updates (not recommended).
+    directed_hunting : bool, default False
+        Toggle for targeted predator movement logic.
+    directed_hunting_values : Tuple[bool, ...]
+        Options compared during Phase 6 extensions.
+    save_timeseries : bool, default False
+        Toggle for recording step-by-step population data.
+    timeseries_subsample : int, default 10
+        Frequency of temporal data points (e.g., every 10 steps).
+    collect_pcf : bool, default True
+        Toggle for Pair Correlation Function analysis.
+    pcf_sample_rate : float, default 0.2
+        Probability that a specific replicate will compute PCFs.
+    pcf_max_distance : float, default 20.0
+        Maximum radial distance for spatial correlation analysis.
+    pcf_n_bins : int, default 20
+        Number of bins in the PCF histogram.
+    min_density_for_analysis : float, default 0.002
+        Population threshold below which spatial analysis is skipped.
+    perturbation_magnitude : float, default 0.1
+        Strength of external shocks applied in Phase 5.
+    n_jobs : int, default -1
+        Number of CPU cores for parallelization (-1 uses all available).
+    """
 
     # Grid settings
     grid_size: int = 1000  # FIXME: Decide default configuration
@@ -167,13 +207,27 @@ class Config:
 
     # Helpers
     def get_prey_births(self) -> np.ndarray:
-        """Generate prey birth rate sweep values."""
+        """
+        Generate a linear range of prey birth rates for experimental sweeps.
+
+        Returns
+        -------
+        np.ndarray
+            1D array of birth rates based on `prey_birth_range` and `n_prey_birth`.
+        """
         return np.linspace(
             self.prey_birth_range[0], self.prey_birth_range[1], self.n_prey_birth
         )
 
     def get_prey_deaths(self) -> np.ndarray:
-        """Generate prey death rate sweep values."""
+        """
+        Generate a linear range of prey death rates for experimental sweeps.
+
+        Returns
+        -------
+        np.ndarray
+            1D array of death rates based on `prey_death_range` and `n_prey_death`.
+        """
         return np.linspace(
             self.prey_death_range[0], self.prey_death_range[1], self.n_prey_death
         )
@@ -181,15 +235,59 @@ class Config:
     def get_warmup_steps(
         self, L: int
     ) -> int:  # FIXME: This method will be updated depending on Sary's results.
-        """Scale warmup with grid size."""
+        """
+        Calculate the required warmup steps scaled by grid size.
+
+        Parameters
+        ----------
+        L : int
+            The side length of the current grid.
+
+        Returns
+        -------
+        int
+            The number of steps to discard before measurement.
+        """
         return self.warmup_steps
 
     def get_measurement_steps(self, L: int) -> int:
-        """Scale measurement with grid size."""
+        """
+        Determine the number of measurement steps based on the grid side length.
+
+        This method allows for dynamic scaling of data collection duration relative 
+        to the system size. Currently, it returns a fixed value, but it is 
+        designed to be overridden for studies where measurement time must 
+        scale with the grid size (e.g., $L^z$ scaling in critical dynamics).
+
+        Parameters
+        ----------
+        L : int
+            The side length of the current simulation grid.
+
+        Returns
+        -------
+        int
+            The number of iterations to perform for statistical measurement.
+        """
         return self.measurement_steps
 
     def estimate_runtime(self, n_cores: int = 32) -> str:
-        """Estimate total runtime based on benchmark data."""
+        """
+        Estimate the wall-clock time required to complete the experiment.
+
+        Calculations account for grid size scaling, PCF overhead, 
+        replicate counts, and available parallel resources.
+
+        Parameters
+        ----------
+        n_cores : int, default 32
+            The number of CPU cores available for execution.
+
+        Returns
+        -------
+        str
+            A human-readable summary of simulation count and estimated hours.
+        """
         # Benchmark: ~1182 steps/sec for 100x100 grid
         ref_size = 100
         ref_steps_per_sec = 1182
@@ -321,7 +419,24 @@ PHASE_CONFIGS = {
 
 
 def get_phase_config(phase: int) -> Config:
-    """Get config for a specific phase."""
+    """
+    Retrieve the configuration object for a specific experimental phase.
+
+    Parameters
+    ----------
+    phase : int
+        The phase number (1 through 6) to retrieve.
+
+    Returns
+    -------
+    Config
+        The configuration instance associated with the requested phase.
+
+    Raises
+    ------
+    ValueError
+        If the phase number is not found in the pre-defined PHASE_CONFIGS.
+    """
     if phase not in PHASE_CONFIGS:
         raise ValueError(
             f"Unknown phase {phase}. Valid phases: {list(PHASE_CONFIGS.keys())}"
