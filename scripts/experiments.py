@@ -945,73 +945,7 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
 
 def run_phase5(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
     """
-    Phase 5: Perturbation analysis (critical slowing down).
-
-    - Points around critical point
-    - Full time series for autocorrelation analysis
-    - Measure relaxation times
-    """
-    from joblib import Parallel, delayed
-
-    warmup_numba_kernels(cfg.grid_size, directed_hunting=cfg.directed_hunting)
-
-    pb = cfg.critical_prey_birth
-    base_pd = cfg.critical_prey_death
-
-    jobs = []
-    for offset in cfg.prey_death_offsets:
-        pd = base_pd + offset
-        if pd <= 0:
-            continue
-
-        for rep in range(cfg.n_replicates):
-            params = {"offset": offset, "phase": 5}
-            seed = generate_unique_seed(params, rep)
-            jobs.append(
-                (
-                    pb,
-                    pd,
-                    cfg.predator_birth,
-                    cfg.predator_death,
-                    cfg.grid_size,
-                    seed,
-                    cfg,
-                    False,
-                )
-            )
-
-    logger.info(f"Phase 5: {len(jobs):,} simulations")
-    logger.info(f"  prey_death offsets: {cfg.prey_death_offsets}")
-    logger.info(f"  Base critical point: pb={pb}, pd={base_pd}")
-
-    output_jsonl = output_dir / "phase5_results.jsonl"
-    all_results = []
-
-    with open(output_jsonl, "w", encoding="utf-8") as f:
-        executor = Parallel(n_jobs=cfg.n_jobs, return_as="generator")
-        tasks = (delayed(run_single_simulation)(*job) for job in jobs)
-
-        for result in tqdm(executor(tasks), total=len(jobs), desc="Phase 5"):
-            f.write(json.dumps(result, default=str) + "\n")
-            f.flush()
-            all_results.append(result)
-
-    meta = {
-        "phase": 5,
-        "description": "Perturbation analysis / critical slowing down",
-        "n_sims": len(all_results),
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-    with open(output_dir / "phase5_metadata.json", "w") as f:
-        json.dump(meta, f, indent=2, default=str)
-
-    logger.info(f"Phase 5 complete. Results: {output_jsonl}")
-    return all_results
-
-
-def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Dict]:
-    """
-    Execute Phase 6 of the simulation: Global 4D parameter sweep with directed hunting.
+    Execute Phase 5 of the simulation: Global 4D parameter sweep with directed hunting.
 
     This phase performs a comprehensive sensitivity analysis by varying four key 
     parameters (prey birth/death and predator birth/death) while directed 
@@ -1054,7 +988,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     other_param_values = np.linspace(0.0, 1.0, 11)  # 11 values for the rest
 
     # Logging
-    logger.info(f"Phase 6: Full 4D Parameter Sweep (Directed Hunting)")
+    logger.info(f"Phase 5: Full 4D Parameter Sweep (Directed Hunting)")
     logger.info(f"  prey_death: 10 values from 0.05 to 0.95")
     logger.info(f"  prey_birth, pred_birth, pred_death: 11 values each from 0 to 1")
     logger.info(f"  Grid Size: {cfg.grid_size}")
@@ -1101,7 +1035,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
         f"  Total simulations: {len(jobs):,}"
     )  # 11 * 10 * 11 * 11 * n_reps = 13,310 * n_reps
 
-    output_jsonl = output_dir / "phase6_results.jsonl"
+    output_jsonl = output_dir / "phase5_results.jsonl"
     all_results = []
 
     with open(output_jsonl, "w", encoding="utf-8") as f:
@@ -1117,7 +1051,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
 
     # Save Metadata
     meta = {
-        "phase": 6,
+        "phase": 5,
         "description": "Global 4D Sensitivity Analysis with Directed Hunting",
         "prey_death_values": prey_death_values.tolist(),
         "other_param_values": other_param_values.tolist(),
@@ -1135,7 +1069,7 @@ def run_phase6(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     with open(output_dir / "phase6_metadata.json", "w") as f:
         json.dump(meta, f, indent=2, default=str)
 
-    logger.info(f"Phase 6 complete. Results: {output_jsonl}")
+    logger.info(f"Phase 5 complete. Results: {output_jsonl}")
     return all_results
 
 
@@ -1149,7 +1083,6 @@ PHASE_RUNNERS = {
     3: run_phase3,
     4: run_phase4,
     5: run_phase5,
-    6: run_phase6,
 }
 
 

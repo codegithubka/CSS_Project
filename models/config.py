@@ -21,6 +21,8 @@ from dataclasses import dataclass, field, asdict
 from typing import Tuple, Optional
 import numpy as np
 
+#FIXME: Tidy up config file for submission
+
 
 @dataclass
 class Config:
@@ -106,11 +108,11 @@ class Config:
     """
 
     # Grid settings
-    grid_size: int = 1000  # FIXME: Decide default configuration
+    grid_size: int = 1000  
     densities: Tuple[float, float] = (
         0.30,
         0.15,
-    )  # (prey, predator)  #FIXME: Default densities
+    )  # (prey, predator) 
 
     # For FSS experiments: multiple grid sizes
     grid_sizes: Tuple[int, ...] = (50, 100, 250, 500, 1000, 2500)
@@ -118,8 +120,8 @@ class Config:
     # Default/fixed parameters
     prey_birth: float = 0.2
     prey_death: float = 0.05
-    predator_birth: float = 0.8  # FIXME: Default predator death rate
-    predator_death: float = 0.05  # FIXME: Default predator death rate
+    predator_birth: float = 0.8  
+    predator_death: float = 0.05  
 
     # Critical point (UPDATE AFTER PHASE 1)
     critical_prey_birth: float = 0.20
@@ -127,7 +129,7 @@ class Config:
 
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
-    n_prey_birth: int = 15  # FIXME: Decide number of grid points along prey axes
+    n_prey_birth: int = 15 
     n_prey_death: int = 5
 
     # Predator parameter sweep (Phase 4 sensitivity)
@@ -136,13 +138,13 @@ class Config:
         0.20,
         0.25,
         0.30,
-    )  # FIXME: Bogus values for now
+    ) 
     predator_death_values: Tuple[float, ...] = (
         0.05,
         0.10,
         0.15,
         0.20,
-    )  # FIXME: Bogus values for now
+    )  
 
     # Perturbation offsets from critical point (Phase 5)
     prey_death_offsets: Tuple[float, ...] = (
@@ -151,14 +153,14 @@ class Config:
         0.0,
         0.01,
         0.02,
-    )  # FIXME: Bogus values for now
+    )  
 
     # Number of replicates per parameter configuration
-    n_replicates: int = 15  # FIXME: Decide number of indep. runs per parameter config
+    n_replicates: int = 15  
 
     # Simulation steps
-    warmup_steps: int = 300  # FIXME: Steps to run before measuring
-    measurement_steps: int = 500  # FIXME: Decide measurement steps
+    warmup_steps: int = 300  
+    measurement_steps: int = 500  
 
     # Evo
     with_evolution: bool = False
@@ -173,7 +175,7 @@ class Config:
         0.10,
         0.15,
         0.20,
-    )  # FIXME: Don't know if we use yet
+    ) 
 
     # Update mode
     synchronous: bool = False  # Always False for this model
@@ -184,7 +186,7 @@ class Config:
 
     # Temporal data collection (time series)
     save_timeseries: bool = False
-    timeseries_subsample: int = 10  # FIXME: Save every how many steps
+    timeseries_subsample: int = 10  
 
     # PCF settings
     collect_pcf: bool = True
@@ -319,7 +321,6 @@ class Config:
 # Experimental Phase Configurations
 ############################################################################################
 
-# FIXME: These configs are arbitraty and should be finalized before running experiments.
 
 PHASE1_CONFIG = Config(
     grid_size=1000,
@@ -381,22 +382,8 @@ PHASE4_CONFIG = Config(
     directed_hunting=False,
 )
 
-
-# Phase 5: Perturbation analysis (critical slowing down)
-PHASE5_CONFIG = Config(
-    grid_size=100,
-    prey_death_offsets=(-0.02, -0.01, 0.0, 0.01, 0.02),  # FIXME: Is this what we vary?
-    n_replicates=20,
-    warmup_steps=500,
-    measurement_steps=2000,
-    perturbation_magnitude=0.1,
-    collect_pcf=False,
-    save_timeseries=True,
-    timeseries_subsample=1,  # Full resolution for autocorrelation
-)
-
 # Phase 6: Model extensions (directed reproduction); same config as phase 4 but with directed reproduction
-PHASE6_CONFIG = Config(
+PHASE5_CONFIG = Config(
     grid_size=250,
     n_replicates=10,
     warmup_steps=500,
@@ -414,7 +401,6 @@ PHASE_CONFIGS = {
     3: PHASE3_CONFIG,
     4: PHASE4_CONFIG,
     5: PHASE5_CONFIG,
-    6: PHASE6_CONFIG,
 }
 
 
