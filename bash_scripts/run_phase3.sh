@@ -13,11 +13,6 @@
 # PP Hydra Effect - Phase 3: Finite-Size Scaling
 # =============================================================================
 #
-# PHASE 3: Test finite-size scaling at critical point
-#   - Grid sizes: 50, 100, 250, 500, 1000
-#   - 20 replicates per size = 100 simulations
-#   - Cluster size distributions for power-law analysis
-#
 # SUBMIT:     sbatch run_phase3.sh
 # MONITOR:    squeue -u $USER
 # CANCEL:     scancel <job_id>
@@ -87,9 +82,3 @@ echo ""
 echo "Output files:"
 ls -lh $OUTPUT_DIR/
 echo ""
-echo "Next steps:"
-echo "  1. Download phase3_results.jsonl"
-echo "  2. Analyze cluster size distributions P(s) for each grid size"
-echo "  3. Fit power-law exponent tau from P(s) ~ s^(-tau)"
-echo "  4. Check finite-size cutoff s_max ~ L^D (fractal dimension)"
-echo "========================================"

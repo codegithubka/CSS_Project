@@ -15,6 +15,7 @@ Usage:
     python experiments.py --phase all                  # Run all phases
     python experiments.py --phase 1 --output results/  # Custom output
 """
+
 import argparse
 import hashlib
 import json
@@ -65,28 +66,29 @@ except ImportError:
 # Utility Functions
 # =============================================================================
 
+
 def generate_unique_seed(params: dict, rep: int) -> int:
     """
     Create a deterministic seed from a dictionary of parameters and a repetition index.
 
-    This function serializes the input dictionary into a sorted JSON string, 
-    appends the repetition count, and hashes the resulting string using SHA-256. 
-    The first 8 characters of the hex digest are then converted to an integer 
+    This function serializes the input dictionary into a sorted JSON string,
+    appends the repetition count, and hashes the resulting string using SHA-256.
+    The first 8 characters of the hex digest are then converted to an integer
     to provide a stable, unique seed for random number generators.
 
     Parameters
     ----------
     params : dict
-    	A dictionary of configuration parameters. Keys are sorted to ensure 
-    	determinism regardless of insertion order.
+        A dictionary of configuration parameters. Keys are sorted to ensure
+        determinism regardless of insertion order.
     rep : int
-    	The repetition or iteration index, used to ensure different seeds 
-    	are generated for the same parameter set across multiple runs.
+        The repetition or iteration index, used to ensure different seeds
+        are generated for the same parameter set across multiple runs.
 
     Returns
     -------
     int
-    	A unique integer seed derived from the input parameters.
+        A unique integer seed derived from the input parameters.
 
     Examples
     --------
@@ -140,7 +142,7 @@ def get_evolved_stats(model, param: str) -> Dict:
     Parameters
     ----------
     model : object
-        The simulation model instance containing a `cell_params` attribute 
+        The simulation model instance containing a `cell_params` attribute
         with a `.get()` method.
     param : str
         The name of the parameter to calculate statistics for.
@@ -178,7 +180,7 @@ def get_evolved_stats(model, param: str) -> Dict:
 
 
 def average_pcfs(
-    pcf_list: List[Tuple[np.ndarray, np.ndarray, int]]
+    pcf_list: List[Tuple[np.ndarray, np.ndarray, int]],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Average multiple Pair Correlation Function (PCF) measurements and calculate standard error.
@@ -202,7 +204,7 @@ def average_pcfs(
 
     Examples
     --------
-    >>> data = [(np.array([0, 1]), np.array([1.0, 2.0]), 10), 
+    >>> data = [(np.array([0, 1]), np.array([1.0, 2.0]), 10),
     ...         (np.array([0, 1]), np.array([1.2, 1.8]), 12)]
     >>> dist, mean, se = average_pcfs(data)
     >>> mean
@@ -241,7 +243,7 @@ def save_results_jsonl(results: List[Dict], output_path: Path):
 
     Notes
     -----
-    The file is opened in 'w' (write) mode, which will overwrite any existing 
+    The file is opened in 'w' (write) mode, which will overwrite any existing
     content at the specified path.
 
     Examples
@@ -258,18 +260,18 @@ def save_results_npz(results: List[Dict], output_path: Path):
     """
     Save simulation results to a compressed NumPy (.npz) binary file.
 
-    This function flattens a list of result dictionaries into a single 
-    dictionary of NumPy arrays, prefixing keys with the run index to 
-    maintain data separation. The resulting file is compressed to 
+    This function flattens a list of result dictionaries into a single
+    dictionary of NumPy arrays, prefixing keys with the run index to
+    maintain data separation. The resulting file is compressed to
     reduce storage space.
 
     Parameters
     ----------
     results : list of dict
-        A list where each dictionary contains key-value pairs of 
+        A list where each dictionary contains key-value pairs of
         simulation data (e.g., arrays, lists, or scalars).
     output_path : Path
-        The file system path (pathlib.Path) where the compressed 
+        The file system path (pathlib.Path) where the compressed
         NPZ file will be saved.
 
     Returns
@@ -279,7 +281,7 @@ def save_results_npz(results: List[Dict], output_path: Path):
     Notes
     -----
     The keys in the saved file follow the format 'run_{index}_{original_key}'.
-    Values are automatically converted to NumPy arrays if they are not 
+    Values are automatically converted to NumPy arrays if they are not
     already.
 
     Examples
@@ -298,7 +300,7 @@ def load_results_jsonl(input_path: Path) -> List[Dict]:
     """
     Load simulation results from a JSON Lines (JSONL) formatted file.
 
-    This function reads a file line-by-line, parsing each line as an 
+    This function reads a file line-by-line, parsing each line as an
     independent JSON object and aggregating them into a list of dictionaries.
 
     Parameters
@@ -350,8 +352,8 @@ def run_single_simulation(
     """
     Run a single Predator-Prey (PP) simulation and collect comprehensive metrics.
 
-    This function initializes a Cellular Automata model, executes a warmup phase 
-    to reach steady state, and then performs a measurement phase to track 
+    This function initializes a Cellular Automata model, executes a warmup phase
+    to reach steady state, and then performs a measurement phase to track
     population dynamics, spatial clustering, and evolutionary changes.
 
     Parameters
@@ -369,13 +371,13 @@ def run_single_simulation(
     seed : int
         Random seed for ensuring reproducibility of the simulation run.
     cfg : Config
-        A configuration object containing simulation hyperparameters (densities, 
+        A configuration object containing simulation hyperparameters (densities,
         sampling rates, timing, etc.).
     with_evolution : bool, optional
-        If True, enables the evolution of the 'prey_death' parameter within 
+        If True, enables the evolution of the 'prey_death' parameter within
         the model (default is False).
     compute_pcf : bool, optional
-        Explicit toggle for Pair Correlation Function calculation. If None, 
+        Explicit toggle for Pair Correlation Function calculation. If None,
         it is determined by `cfg.pcf_sample_rate` (default is None).
 
     Returns
@@ -391,8 +393,8 @@ def run_single_simulation(
 
     Notes
     -----
-    The function relies on several external utilities: `count_populations`, 
-    `get_evolved_stats`, `get_cluster_stats_fast`, `compute_all_pcfs_fast`, 
+    The function relies on several external utilities: `count_populations`,
+    `get_evolved_stats`, `get_cluster_stats_fast`, `compute_all_pcfs_fast`,
     and `average_pcfs`.
     """
 
@@ -580,26 +582,26 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Execute Phase 1 of the simulation: a parameter sweep to identify critical points.
 
-    This function performs a 1D sweep across varying prey mortality rates while 
-    keeping other parameters fixed. It utilizes parallel execution via joblib 
-    and saves results incrementally to a JSONL file to ensure data integrity 
+    This function performs a 1D sweep across varying prey mortality rates while
+    keeping other parameters fixed. It utilizes parallel execution via joblib
+    and saves results incrementally to a JSONL file to ensure data integrity
     during long-running batches.
 
     Parameters
     ----------
     cfg : Config
-        Configuration object containing simulation hyperparameters, sweep 
+        Configuration object containing simulation hyperparameters, sweep
         ranges, and execution settings (n_jobs, grid_size, etc.).
     output_dir : Path
         Directory where result files (JSONL) and metadata (JSON) will be stored.
     logger : logging.Logger
-        Logger instance for tracking simulation progress and recording 
+        Logger instance for tracking simulation progress and recording
         operational metadata.
 
     Returns
     -------
     all_results : list of dict
-        A list of dictionaries containing the metrics collected from every 
+        A list of dictionaries containing the metrics collected from every
         individual simulation run in the sweep.
 
     Notes
@@ -608,7 +610,7 @@ def run_phase1(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     1. Pre-warms Numba kernels for performance.
     2. Generates a deterministic set of simulation jobs using unique seeds.
     3. Executes simulations in parallel using a generator for memory efficiency.
-    4. Records metadata including a timestamp and a serialized snapshot of 
+    4. Records metadata including a timestamp and a serialized snapshot of
        the configuration.
     """
     from joblib import Parallel, delayed
@@ -674,15 +676,15 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Execute Phase 2 of the simulation: self-organization and criticality analysis.
 
-    This phase tests the Self-Organized Criticality (SOC) hypothesis by 
-    initializing simulations at different points in the parameter space and 
-    observing whether evolutionary pressure drives the system toward a 
+    This phase tests the Self-Organized Criticality (SOC) hypothesis by
+    initializing simulations at different points in the parameter space and
+    observing whether evolutionary pressure drives the system toward a
     common critical point, regardless of initial prey mortality rates.
 
     Parameters
     ----------
     cfg : Config
-        Configuration object containing simulation hyperparameters, evolution 
+        Configuration object containing simulation hyperparameters, evolution
         settings, and execution constraints.
     output_dir : Path
         Directory where result files (JSONL) and metadata (JSON) will be stored.
@@ -692,7 +694,7 @@ def run_phase2(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     Returns
     -------
     all_results : list of dict
-        A list of dictionaries containing metrics from the evolutionary 
+        A list of dictionaries containing metrics from the evolutionary
         simulation runs.
 
     Notes
@@ -824,18 +826,18 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Execute Phase 3 of the simulation: Finite-Size Scaling (FSS) analysis.
 
-    This phase investigates how spatial structures, specifically cluster size 
-    cutoffs, scale with the system size (L) at the critical point identified 
-    in Phase 1. This is essential for determining the universality class of 
+    This phase investigates how spatial structures, specifically cluster size
+    cutoffs, scale with the system size (L) at the critical point identified
+    in Phase 1. This is essential for determining the universality class of
     the phase transition.
 
     Parameters
     ----------
     cfg : Config
-        Configuration object containing critical point parameters, the list of 
+        Configuration object containing critical point parameters, the list of
         grid sizes to test, and execution settings.
     output_dir : Path
-        Directory where result files (JSONL) and FSS metadata (JSON) will be 
+        Directory where result files (JSONL) and FSS metadata (JSON) will be
         stored.
     logger : logging.Logger
         Logger instance for tracking progress across different grid sizes.
@@ -843,7 +845,7 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     Returns
     -------
     all_results : list of dict
-        A list of dictionaries containing metrics and cluster statistics for 
+        A list of dictionaries containing metrics and cluster statistics for
         each grid size and replicate.
 
     Notes
@@ -851,7 +853,7 @@ def run_phase4(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     The function performs the following:
     1. Iterates through multiple grid sizes defined in `cfg.grid_sizes`.
     2. Generates parallel jobs for each size using critical birth/death rates.
-    3. Saves results incrementally to allow for post-simulation analysis of 
+    3. Saves results incrementally to allow for post-simulation analysis of
        power-law exponents.
     """
     from joblib import Parallel, delayed
@@ -947,35 +949,35 @@ def run_phase5(cfg: Config, output_dir: Path, logger: logging.Logger) -> List[Di
     """
     Execute Phase 5 of the simulation: Global 4D parameter sweep with directed hunting.
 
-    This phase performs a comprehensive sensitivity analysis by varying four key 
-    parameters (prey birth/death and predator birth/death) while directed 
-    hunting is enabled. The results allow for a direct comparison with Phase 4 
-    to determine how predator search behavior shifts the system's critical 
+    This phase performs a comprehensive sensitivity analysis by varying four key
+    parameters (prey birth/death and predator birth/death) while directed
+    hunting is enabled. The results allow for a direct comparison with Phase 4
+    to determine how predator search behavior shifts the system's critical
     thresholds and stability.
 
     Parameters
     ----------
     cfg : Config
-        Configuration object containing simulation hyperparameters, parallel 
+        Configuration object containing simulation hyperparameters, parallel
         execution settings, and the fixed grid size for this phase.
     output_dir : Path
-        Directory where the result JSONL file and execution metadata will 
+        Directory where the result JSONL file and execution metadata will
         be stored.
     logger : logging.Logger
-        Logger instance for tracking the progress of the high-volume 
+        Logger instance for tracking the progress of the high-volume
         simulation batch.
 
     Returns
     -------
     all_results : list of dict
-        A list of dictionaries containing metrics for every simulation in 
+        A list of dictionaries containing metrics for every simulation in
         the 4D parameter grid.
 
     Notes
     -----
-    The function utilizes a Cartesian product of parameter ranges to build a 
-    job list of over 13,000 unique parameter sets (multiplied by replicates). 
-    Seeds are uniquely generated to distinguish these runs from other phases 
+    The function utilizes a Cartesian product of parameter ranges to build a
+    job list of over 13,000 unique parameter sets (multiplied by replicates).
+    Seeds are uniquely generated to distinguish these runs from other phases
     even if parameter values overlap.
     """
     from joblib import Parallel, delayed
@@ -1088,17 +1090,17 @@ PHASE_RUNNERS = {
 
 def main():
     """
-    Orchestrate the predator-prey experimental suite across multiple phases.
+    Organize the predator-prey experimental suite across multiple phases.
 
-    This entry point handles command-line arguments, sets up logging and output 
-    directories, and executes the requested simulation phases (1-6). It 
-    supports parallel execution, dry runs for runtime estimation, and 
+    This entry point handles command-line arguments, sets up logging and output
+    directories, and executes the requested simulation phases (1-5). It
+    supports parallel execution, dry runs for runtime estimation, and
     automated configuration persistence.
 
     Notes
     -----
-    The script dynamically retrieves phase-specific configurations using 
-    `get_phase_config` and dispatches execution to the corresponding runner 
+    The script dynamically retrieves phase-specific configurations using
+    `get_phase_config` and dispatches execution to the corresponding runner
     in the `PHASE_RUNNERS` mapping.
     """
     parser = argparse.ArgumentParser(

@@ -14,9 +14,6 @@
 # =============================================================================
 #
 # PHASE 1: Find critical point via 2D sweep of prey_birth × prey_death
-#   - 15 × 15 × 15 reps × 2 (evo/non-evo) = 6,750 simulations
-#   - Estimated runtime: ~2 min on 32 cores
-#   - Memory: ~8 GB peak
 #
 # SUBMIT:     sbatch run_phase1.sh
 # MONITOR:    squeue -u $USER
@@ -89,9 +86,3 @@ echo ""
 echo "Output files:"
 ls -lh $OUTPUT_DIR/
 echo ""
-echo "Next steps:"
-echo "  1. Download phase1_results.jsonl"
-echo "  2. Run analysis.py to find critical point"
-echo "  3. Update config.py with critical_prey_birth/death"
-echo "  4. Run phase 2-5"
-echo "========================================"

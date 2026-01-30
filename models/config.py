@@ -6,13 +6,13 @@ Single Config dataclass with pre-defined instances for each experimental phase.
 
 Usage:
     from config import PHASE1_CONFIG, PHASE2_CONFIG, Config
-    
+
     # Use pre-defined config
     cfg = PHASE1_CONFIG
-    
+
     # Or create custom config
     cfg = Config(grid_size=150, n_replicates=20)
-    
+
     # Or modify existing
     cfg = Config(**{**asdict(PHASE1_CONFIG), 'n_replicates': 30})
 """
@@ -21,7 +21,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Tuple, Optional
 import numpy as np
 
-#FIXME: Tidy up config file for submission
+# FIXME: Tidy up config file for submission
 
 
 @dataclass
@@ -29,8 +29,8 @@ class Config:
     """
     Central configuration for Predator-Prey Hydra Effect experiments.
 
-    This dataclass aggregates all hyperparameters, grid settings, and 
-    experimental phase definitions. It includes helper methods for 
+    This dataclass aggregates all hyperparameters, grid settings, and
+    experimental phase definitions. It includes helper methods for
     parameter sweep generation and runtime estimation.
 
     Attributes
@@ -108,11 +108,11 @@ class Config:
     """
 
     # Grid settings
-    grid_size: int = 1000  
+    grid_size: int = 1000
     densities: Tuple[float, float] = (
         0.30,
         0.15,
-    )  # (prey, predator) 
+    )  # (prey, predator)
 
     # For FSS experiments: multiple grid sizes
     grid_sizes: Tuple[int, ...] = (50, 100, 250, 500, 1000, 2500)
@@ -120,8 +120,8 @@ class Config:
     # Default/fixed parameters
     prey_birth: float = 0.2
     prey_death: float = 0.05
-    predator_birth: float = 0.8  
-    predator_death: float = 0.05  
+    predator_birth: float = 0.8
+    predator_death: float = 0.05
 
     # Critical point (UPDATE AFTER PHASE 1)
     critical_prey_birth: float = 0.20
@@ -129,7 +129,7 @@ class Config:
 
     # Prey parameter sweep (Phase 1)
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
-    n_prey_birth: int = 15 
+    n_prey_birth: int = 15
     n_prey_death: int = 5
 
     # Predator parameter sweep (Phase 4 sensitivity)
@@ -138,13 +138,13 @@ class Config:
         0.20,
         0.25,
         0.30,
-    ) 
+    )
     predator_death_values: Tuple[float, ...] = (
         0.05,
         0.10,
         0.15,
         0.20,
-    )  
+    )
 
     # Perturbation offsets from critical point (Phase 5)
     prey_death_offsets: Tuple[float, ...] = (
@@ -153,14 +153,14 @@ class Config:
         0.0,
         0.01,
         0.02,
-    )  
+    )
 
     # Number of replicates per parameter configuration
-    n_replicates: int = 15  
+    n_replicates: int = 15
 
     # Simulation steps
-    warmup_steps: int = 300  
-    measurement_steps: int = 500  
+    warmup_steps: int = 300
+    measurement_steps: int = 500
 
     # Evo
     with_evolution: bool = False
@@ -175,7 +175,7 @@ class Config:
         0.10,
         0.15,
         0.20,
-    ) 
+    )
 
     # Update mode
     synchronous: bool = False  # Always False for this model
@@ -186,7 +186,7 @@ class Config:
 
     # Temporal data collection (time series)
     save_timeseries: bool = False
-    timeseries_subsample: int = 10  
+    timeseries_subsample: int = 10
 
     # PCF settings
     collect_pcf: bool = True
@@ -256,9 +256,9 @@ class Config:
         """
         Determine the number of measurement steps based on the grid side length.
 
-        This method allows for dynamic scaling of data collection duration relative 
-        to the system size. Currently, it returns a fixed value, but it is 
-        designed to be overridden for studies where measurement time must 
+        This method allows for dynamic scaling of data collection duration relative
+        to the system size. Currently, it returns a fixed value, but it is
+        designed to be overridden for studies where measurement time must
         scale with the grid size (e.g., $L^z$ scaling in critical dynamics).
 
         Parameters
@@ -277,7 +277,7 @@ class Config:
         """
         Estimate the wall-clock time required to complete the experiment.
 
-        Calculations account for grid size scaling, PCF overhead, 
+        Calculations account for grid size scaling, PCF overhead,
         replicate counts, and available parallel resources.
 
         Parameters

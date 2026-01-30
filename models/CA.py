@@ -22,8 +22,8 @@ class CA:
     """
     Base cellular automaton class for spatial simulations.
 
-    This class provides a framework for multi-species cellular automata with 
-    support for global parameters, per-cell evolving parameters, and 
+    This class provides a framework for multi-species cellular automata with
+    support for global parameters, per-cell evolving parameters, and
     grid initialization based on density.
 
     Attributes
@@ -188,9 +188,9 @@ class CA:
         """
         Infer the 1-based species index from a parameter name using `species_names`.
 
-        This method checks if the given parameter name starts with any of the 
-        defined species names followed by an underscore (e.g., 'prey_birth'). 
-        It is used to automatically route global parameters to the correct 
+        This method checks if the given parameter name starts with any of the
+        defined species names followed by an underscore (e.g., 'prey_birth').
+        It is used to automatically route global parameters to the correct
         species' local parameter arrays.
 
         Parameters
@@ -201,12 +201,12 @@ class CA:
         Returns
         -------
         Optional[int]
-            The 1-based index of the species if a matching prefix is found; 
+            The 1-based index of the species if a matching prefix is found;
             otherwise, None.
 
         Notes
         -----
-        The method expects `self.species_names` to be a collection of strings. 
+        The method expects `self.species_names` to be a collection of strings.
         If `param_name` is not a string or no match is found, it returns None.
         """
         if not isinstance(param_name, str):
@@ -227,40 +227,40 @@ class CA:
         """
         Enable per-cell evolution for a specific parameter on a given species.
 
-        This method initializes a spatial parameter array (local parameter map) 
-        for a global parameter. It allows individual cells to carry their own 
-        values for that parameter, which can then mutate and evolve during 
+        This method initializes a spatial parameter array (local parameter map)
+        for a global parameter. It allows individual cells to carry their own
+        values for that parameter, which can then mutate and evolve during
         the simulation.
 
         Parameters
         ----------
         param : str
-            The name of the global parameter to enable for evolution. 
+            The name of the global parameter to enable for evolution.
             Must exist in `self.params`.
         species : int, optional
-            The 1-based index of the species to which this parameter applies. 
-            If None, the method attempts to infer the species from the 
+            The 1-based index of the species to which this parameter applies.
+            If None, the method attempts to infer the species from the
             parameter name prefix.
         sd : float, default 0.05
-            The standard deviation of the Gaussian mutation applied during 
+            The standard deviation of the Gaussian mutation applied during
             inheritance/reproduction.
         min_val : float, optional
-            The minimum allowable value for the parameter (clamping). 
+            The minimum allowable value for the parameter (clamping).
             Defaults to 0.01 if not provided.
         max_val : float, optional
-            The maximum allowable value for the parameter (clamping). 
+            The maximum allowable value for the parameter (clamping).
             Defaults to 0.99 if not provided.
 
         Raises
         ------
         ValueError
-            If the parameter is not in `self.params`, the species cannot be 
+            If the parameter is not in `self.params`, the species cannot be
             inferred, or the species index is out of bounds.
 
         Notes
         -----
-        The local parameter is stored in `self.cell_params` as a 2D numpy 
-        array initialized with the current global value for all cells of 
+        The local parameter is stored in `self.cell_params` as a 2D numpy
+        array initialized with the current global value for all cells of
         the target species, and `NaN` elsewhere.
         """
         if min_val is None:
@@ -293,9 +293,9 @@ class CA:
         """
         Perform one update step of the cellular automaton.
 
-        This is an abstract method that defines the transition rules of the 
-        system. It must be implemented by concrete subclasses to specify 
-        how cell states and parameters change over time based on their 
+        This is an abstract method that defines the transition rules of the
+        system. It must be implemented by concrete subclasses to specify
+        how cell states and parameters change over time based on their
         current state and neighborhood.
 
         Raises
@@ -309,7 +309,7 @@ class CA:
 
         Notes
         -----
-        In a typical implementation, this method handles the logic for 
+        In a typical implementation, this method handles the logic for
         stochastic transitions, movement, or predator-prey interactions.
         """
         raise NotImplementedError(
@@ -325,9 +325,9 @@ class CA:
         """
         Execute the cellular automaton simulation for a specified number of steps.
 
-        This method drives the simulation loop, calling `update()` at each 
-        iteration. It manages visualization updates, directory creation for 
-        data persistence, and handles the freezing of evolving parameters 
+        This method drives the simulation loop, calling `update()` at each
+        iteration. It manages visualization updates, directory creation for
+        data persistence, and handles the freezing of evolving parameters
         at a specific time step.
 
         Parameters
@@ -335,11 +335,11 @@ class CA:
         steps : int
             The total number of iterations to run (must be non-negative).
         stop_evolution_at : int, optional
-            The 1-based iteration index after which parameter mutation is 
-            disabled. Useful for observing system stability after a period 
+            The 1-based iteration index after which parameter mutation is
+            disabled. Useful for observing system stability after a period
             of adaptation.
         snapshot_iters : List[int], optional
-            A list of specific 1-based iteration indices at which to save 
+            A list of specific 1-based iteration indices at which to save
             the current grid state to the results directory.
 
         Returns
@@ -348,8 +348,8 @@ class CA:
 
         Notes
         -----
-        If snapshots are requested, a results directory is automatically created 
-        using a timestamped subfolder (e.g., 'results/run-1700000000/'). 
+        If snapshots are requested, a results directory is automatically created
+        using a timestamped subfolder (e.g., 'results/run-1700000000/').
         Visualization errors are logged but do not terminate the simulation.
         """
         assert (
@@ -405,9 +405,9 @@ class PP(CA):
     """
     Predator-Prey Cellular Automaton model with Numba-accelerated kernels.
 
-    This model simulates a stochastic predator-prey system where species 
-    interact on a 2D grid. It supports evolving per-cell death rates, 
-    periodic boundary conditions, and both random and directed hunting 
+    This model simulates a stochastic predator-prey system where species
+    interact on a 2D grid. It supports evolving per-cell death rates,
+    periodic boundary conditions, and both random and directed hunting
     behaviors.
 
     Parameters
@@ -421,17 +421,17 @@ class PP(CA):
     neighborhood : {'moore', 'neumann'}, default 'moore'
         The neighborhood type for cell interactions.
     params : Dict[str, object], optional
-        Global parameters: "prey_death", "predator_death", "prey_birth", 
+        Global parameters: "prey_death", "predator_death", "prey_birth",
         "predator_birth".
     cell_params : Dict[str, object], optional
         Initial local parameter maps (2D arrays).
     seed : int, optional
         Random seed for reproducibility.
     synchronous : bool, default True
-        If True, updates the entire grid at once. If False, updates 
+        If True, updates the entire grid at once. If False, updates
         cells asynchronously.
     directed_hunting : bool, default False
-        If True, predators selectively hunt prey rather than choosing 
+        If True, predators selectively hunt prey rather than choosing
         neighbors at random.
 
     Attributes
@@ -515,8 +515,8 @@ class PP(CA):
         """
         Validate Predator-Prey specific invariants and spatial parameter arrays.
 
-        Extends the base CA validation to ensure that numerical parameters are 
-        within the [0, 1] probability range and that evolved parameter maps 
+        Extends the base CA validation to ensure that numerical parameters are
+        within the [0, 1] probability range and that evolved parameter maps
         (e.g., prey_death) correctly align with the species locations.
 
         Raises
@@ -575,9 +575,9 @@ class PP(CA):
         """
         Execute an asynchronous update using the optimized Numba kernel.
 
-        This method retrieves the evolved parameter maps and delegates the 
-        stochastic transitions to the `PPKernel`. Asynchronous updates 
-        typically handle cell-by-cell logic where changes can be 
+        This method retrieves the evolved parameter maps and delegates the
+        stochastic transitions to the `PPKernel`. Asynchronous updates
+        typically handle cell-by-cell logic where changes can be
         immediately visible to neighbors.
         """
         # Get the evolved prey death map

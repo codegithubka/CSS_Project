@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import directly from models to avoid __init__ issues
 from models.CA import PP
 
-
 # ============================================================================
 # 1. STRESS METRIC & PERTURBATION DYNAMICS
 # ============================================================================

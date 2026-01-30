@@ -4,7 +4,7 @@ Benchmarking Script for Predator-Prey Simulation Optimizations
 
 Measures and compares performance of:
 1. Numba-optimized kernel vs pure Python baseline
-2. Cell-list PCF vs brute-force PCF  
+2. Cell-list PCF vs brute-force PCF
 3. Grid size scaling behavior
 4. Random vs directed hunting overhead
 5. Full simulation pipeline

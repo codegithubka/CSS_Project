@@ -13,11 +13,6 @@
 # PP Hydra Effect - Phase 2: Self-Organization (SOC Test)
 # =============================================================================
 #
-# PHASE 2: Test if prey_death evolves toward critical point
-#   - 6 initial prey_death values × 30 reps = 180 simulations
-#   - Longer runs (5000 steps) for evolution to equilibrate
-#   - Tracks evolved_prey_death_timeseries
-#
 # SUBMIT:     sbatch run_phase2.sh
 # MONITOR:    squeue -u $USER
 # CANCEL:     scancel <job_id>
@@ -89,9 +84,3 @@ echo ""
 echo "Output files:"
 ls -lh $OUTPUT_DIR/
 echo ""
-echo "Next steps:"
-echo "  1. Download phase2_results.jsonl"
-echo "  2. Plot evolved_prey_death_final vs initial prey_death"
-echo "  3. Check if all runs converge to ~0.095-0.105 (critical point)"
-echo "  4. If SOC confirmed, proceed to Phase 3 (finite-size scaling)"
-echo "========================================"

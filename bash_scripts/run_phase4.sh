@@ -13,13 +13,6 @@
 # PP Hydra Effect - Phase 4: Global Sensitivity Analysis
 # =============================================================================
 #
-# PHASE 4: Full 4D Parameter Sweep (Global Sensitivity)
-#   - Parameters: prey_birth, prey_death, pred_birth, pred_death
-#   - Sweep: 0.0 to 1.0 (11 values each) = 14,641 combinations
-#   - Replicates: 10 per combination
-#   - Total Simulations: ~146,410
-#   - Grid Size: 250x250
-#
 # SUBMIT:     sbatch run_phase4.sh
 # MONITOR:    squeue -u $USER
 # CANCEL:     scancel <job_id>
@@ -90,9 +83,3 @@ echo ""
 echo "Output files:"
 ls -lh $OUTPUT_DIR/
 echo ""
-echo "Next steps:"
-echo "  1. Download phase4_results.jsonl"
-echo "  2. Perform Global Sensitivity Analysis (Sobol Indices)"
-echo "  3. Identify parameter dominance for extinction events"
-echo "  4. Plot parameter heatmaps for predator/prey survival"
-echo "========================================"
