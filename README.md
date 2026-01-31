@@ -290,7 +290,3 @@ Metadata files (`phase{N}_metadata.json`) accompany each results file with confi
 **Optional:**
 - matplotlib (visualization)
 - scipy (additional analysis)
-
----
-
-## References

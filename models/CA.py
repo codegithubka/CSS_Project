@@ -1,8 +1,34 @@
-"""Cellular automaton base class.
+#!/usr/bin/env python3
+"""
+Cellular Automaton Framework
+============================
 
-Defines a CA class with initialization, neighbor counting, update (to override),
-and run loop. Uses a numpy Generator for all randomness and supports
-Neumann and Moore neighborhoods with periodic boundaries.
+This module provides the base cellular automaton class and the
+Predator-Prey (PP) implementation with Numba-accelerated kernels.
+
+Classes
+-------
+CA: Abstract base class for spatial cellular automata.
+
+PP: Predator-Prey model with configurable hunting behavior.
+
+Example
+-------
+```python
+from models.CA import PP
+
+# Basic usage
+model = PP(rows=100, cols=100, densities=(0.3, 0.15), seed=42)
+model.run(steps=1000)
+
+# With evolution enabled
+model = PP(rows=100, cols=100, seed=42)
+model.evolve("prey_death", sd=0.05, min_val=0.01, max_val=0.15)
+model.run(steps=500)
+
+# With directed hunting
+model = PP(rows=100, cols=100, directed_hunting=True, seed=42)
+```
 """
 
 from typing import Tuple, Dict, Optional
@@ -22,15 +48,27 @@ logger = logging.getLogger(__name__)
 
 
 class CA:
-    """Base cellular automaton class.
+    """
+    Base cellular automaton class for spatial simulations.
+
+    This class provides a framework for multi-species cellular automata with
+    support for global parameters, per-cell evolving parameters, and
+    grid initialization based on density.
 
     Attributes
-    - n_species: number of distinct (non-zero) states
-    - grid: 2D numpy array containing integers in {0, 1, ..., n_species}
-    - neighborhood: either "neumann" or "moore"
-    - generator: numpy.random.Generator used for all randomness
-    - params: global parameters dict
-    - cell_params: local (per-cell) parameters dict
+    ----------
+    grid : np.ndarray
+        2D numpy array containing integers in range [0, n_species].
+    params : Dict[str, Any]
+        Global parameters shared by all cells.
+    cell_params : Dict[str, Any]
+        Local per-cell parameters, typically stored as numpy arrays matching the grid shape.
+    neighborhood : str
+        The adjacency rule used ('neumann' or 'moore').
+    generator : np.random.Generator
+        The random number generator instance for reproducibility.
+    species_names : Tuple[str, ...]
+        Human-readable names for each species state.
     """
 
     # Default colormap spec (string or sequence); resolved in `visualize` at runtime
@@ -39,19 +77,23 @@ class CA:
     # Read-only accessors for size/densities (protected attributes set in __init__)
     @property
     def rows(self) -> int:
+        """int: Number of rows in the grid."""
         return getattr(self, "_rows")
 
     @property
     def cols(self) -> int:
+        """int: Number of columns in the grid."""
         return getattr(self, "_cols")
 
     @property
     def densities(self) -> Tuple[float, ...]:
+        """Tuple[float, ...]: Initial density fraction for each species."""
         return tuple(getattr(self, "_densities"))
 
     # make n_species protected with read-only property
     @property
     def n_species(self) -> int:
+        """int: Number of distinct species states (excluding empty state 0)."""
         return int(getattr(self, "_n_species"))
 
     def __init__(
@@ -64,22 +106,26 @@ class CA:
         cell_params: Dict[str, object],
         seed: Optional[int] = None,
     ) -> None:
-        """Initialize the cellular automaton.
+        """
+        Initialize the cellular automaton grid and configurations.
 
-        Args:
-        - rows (int): number of rows (>0)
-        - cols (int): number of columns (>0)
-        - densities (tuple of floats): initial density for each species. The
-          length of this tuple defines `n_species`. Values must be >=0 and sum
-          to at most 1. Each value gives the fraction of the grid to set to
-          that species (state values are 1..n_species).
-        - neighborhood (str): either "neumann" (4-neighbors) or "moore"
-          (8-neighbors).
-        - params (dict): global parameters.
-        - cell_params (dict): local per-cell parameters.
-        - seed (Optional[int]): seed for the numpy random generator.
-
-        Returns: None
+        Parameters
+        ----------
+        rows : int
+            Number of rows in the grid (must be > 0).
+        cols : int
+            Number of columns in the grid (must be > 0).
+        densities : Tuple[float, ...]
+            Initial density for each species. Length defines `n_species`.
+            Values must sum to <= 1.0.
+        neighborhood : {'neumann', 'moore'}
+            Type of neighborhood connectivity.
+        params : Dict[str, Any]
+            Initial global parameter values.
+        cell_params : Dict[str, Any]
+            Initial local per-cell parameters.
+        seed : int, optional
+            Seed for the random number generator.
         """
         assert isinstance(rows, int) and rows > 0, "rows must be positive int"
         assert isinstance(cols, int) and cols > 0, "cols must be positive int"
@@ -142,12 +188,16 @@ class CA:
             self.grid[r, c] = i + 1
 
     def validate(self) -> None:
-        """Validate core CA invariants.
+        """
+        Validate core CA invariants and grid dimensions.
 
-                Checks that `neighborhood` is valid, that `self.grid` has the
-        texpected shape `(rows, cols)`, and that any numpy arrays in
-        `self.cell_params` have matching shapes. Raises `ValueError` on
-        validation failure.
+        Checks that the neighborhood is valid, the grid matches initialized dimensions,
+        and that local parameter arrays match the grid shape.
+
+        Raises
+        ------
+        ValueError
+            If any structural invariant is violated.
         """
         if self.neighborhood not in ("neumann", "moore"):
             raise ValueError("neighborhood must be 'neumann' or 'moore'")
@@ -164,10 +214,29 @@ class CA:
                 raise ValueError(f"cell_params['{k}'] must have shape equal to grid")
 
     def _infer_species_from_param_name(self, param_name: str) -> Optional[int]:
-        """Infer species index (1-based) from a parameter name using `species_names`.
+        """
+        Infer the 1-based species index from a parameter name using `species_names`.
 
-        Returns the 1-based species index if a matching prefix is found,
-        otherwise `None`.
+        This method checks if the given parameter name starts with any of the
+        defined species names followed by an underscore (e.g., 'prey_birth').
+        It is used to automatically route global parameters to the correct
+        species' local parameter arrays.
+
+        Parameters
+        ----------
+        param_name : str
+            The name of the parameter to check.
+
+        Returns
+        -------
+        Optional[int]
+            The 1-based index of the species if a matching prefix is found;
+            otherwise, None.
+
+        Notes
+        -----
+        The method expects `self.species_names` to be a collection of strings.
+        If `param_name` is not a string or no match is found, it returns None.
         """
         if not isinstance(param_name, str):
             return None
@@ -184,13 +253,44 @@ class CA:
         min_val: Optional[float] = None,
         max_val: Optional[float] = None,
     ) -> None:
-        """Enable per-cell evolution for `param` on `species`.
+        """
+        Enable per-cell evolution for a specific parameter on a given species.
 
-        If `species` is None, attempt to infer the species using
-        `_infer_species_from_param_name(param)` which matches against
-        `self.species_names`. This keeps `CA` free of domain-specific
-        (predator/prey) logic while preserving backward compatibility when
-        subclasses set `species_names` (e.g. `('prey','predator')`).
+        This method initializes a spatial parameter array (local parameter map)
+        for a global parameter. It allows individual cells to carry their own
+        values for that parameter, which can then mutate and evolve during
+        the simulation.
+
+        Parameters
+        ----------
+        param : str
+            The name of the global parameter to enable for evolution.
+            Must exist in `self.params`.
+        species : int, optional
+            The 1-based index of the species to which this parameter applies.
+            If None, the method attempts to infer the species from the
+            parameter name prefix.
+        sd : float, default 0.05
+            The standard deviation of the Gaussian mutation applied during
+            inheritance/reproduction.
+        min_val : float, optional
+            The minimum allowable value for the parameter (clamping).
+            Defaults to 0.01 if not provided.
+        max_val : float, optional
+            The maximum allowable value for the parameter (clamping).
+            Defaults to 0.99 if not provided.
+
+        Raises
+        ------
+        ValueError
+            If the parameter is not in `self.params`, the species cannot be
+            inferred, or the species index is out of bounds.
+
+        Notes
+        -----
+        The local parameter is stored in `self.cell_params` as a 2D numpy
+        array initialized with the current global value for all cells of
+        the target species, and `NaN` elsewhere.
         """
         if min_val is None:
             min_val = 0.01
@@ -219,13 +319,27 @@ class CA:
         }
 
     def update(self) -> None:
-        """Perform one update step.
+        """
+        Perform one update step of the cellular automaton.
 
-        This base implementation must be overridden by subclasses. It raises
-        NotImplementedError to indicate it should be provided by concrete
-        models that inherit from `CA`.
+        This is an abstract method that defines the transition rules of the
+        system. It must be implemented by concrete subclasses to specify
+        how cell states and parameters change over time based on their
+        current state and neighborhood.
 
-        Returns: None
+        Raises
+        ------
+        NotImplementedError
+            If called directly on the base class instead of an implementation.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        In a typical implementation, this method handles the logic for
+        stochastic transitions, movement, or predator-prey interactions.
         """
         raise NotImplementedError(
             "Override update() in a subclass to define CA dynamics"
@@ -237,12 +351,35 @@ class CA:
         stop_evolution_at: Optional[int] = None,
         snapshot_iters: Optional[list] = None,
     ) -> None:
-        """Run the CA for a number of steps.
+        """
+        Execute the cellular automaton simulation for a specified number of steps.
 
-        Args:
-        - steps (int): number of iterations to run (must be non-negative).
+        This method drives the simulation loop, calling `update()` at each
+        iteration. It manages visualization updates, directory creation for
+        data persistence, and handles the freezing of evolving parameters
+        at a specific time step.
 
-        Returns: None
+        Parameters
+        ----------
+        steps : int
+            The total number of iterations to run (must be non-negative).
+        stop_evolution_at : int, optional
+            The 1-based iteration index after which parameter mutation is
+            disabled. Useful for observing system stability after a period
+            of adaptation.
+        snapshot_iters : List[int], optional
+            A list of specific 1-based iteration indices at which to save
+            the current grid state to the results directory.
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        If snapshots are requested, a results directory is automatically created
+        using a timestamped subfolder (e.g., 'results/run-1700000000/').
+        Visualization errors are logged but do not terminate the simulation.
         """
         assert (
             isinstance(steps, int) and steps >= 0
@@ -294,19 +431,46 @@ class CA:
 
 
 class PP(CA):
-    """Predator-prey CA.
+    """
+    Predator-Prey Cellular Automaton model with Numba-accelerated kernels.
 
-    States: 0 = empty, 1 = prey, 2 = predator
+    This model simulates a stochastic predator-prey system where species
+    interact on a 2D grid. It supports evolving per-cell death rates,
+    periodic boundary conditions, and both random and directed hunting
+    behaviors.
 
-    Parameters (in `params` dict). Allowed keys and defaults:
-    - "prey_death": 0.05
-    - "predator_death": 0.1
-    - "prey_birth": 0.25
-    - "predator_birth": 0.2
+    Parameters
+    ----------
+    rows : int, default 10
+        Number of rows in the simulation grid.
+    cols : int, default 10
+        Number of columns in the simulation grid.
+    densities : Tuple[float, ...], default (0.2, 0.1)
+        Initial population densities for (prey, predator).
+    neighborhood : {'moore', 'neumann'}, default 'moore'
+        The neighborhood type for cell interactions.
+    params : Dict[str, object], optional
+        Global parameters: "prey_death", "predator_death", "prey_birth",
+        "predator_birth".
+    cell_params : Dict[str, object], optional
+        Initial local parameter maps (2D arrays).
+    seed : int, optional
+        Random seed for reproducibility.
+    synchronous : bool, default True
+        If True, updates the entire grid at once. If False, updates
+        cells asynchronously.
+    directed_hunting : bool, default False
+        If True, predators selectively hunt prey rather than choosing
+        neighbors at random.
 
-    The constructor validates parameters are in [0,1] and raises if
-    other user-supplied params are present. The `synchronous` flag
-    chooses the update mode (default True -> synchronous updates).
+    Attributes
+    ----------
+    species_names : Tuple[str, ...]
+        Labels for the species ('prey', 'predator').
+    synchronous : bool
+        Current update mode.
+    directed_hunting : bool
+        Current hunting strategy logic.
     """
 
     # Default colors: 0=empty black, 1=prey green, 2=predator red
@@ -324,6 +488,9 @@ class PP(CA):
         synchronous: bool = True,
         directed_hunting: bool = False,  # New directed hunting option
     ) -> None:
+        """
+        Initialize the Predator-Prey CA with validated parameters and kernels.
+        """
         # Allowed params and defaults
         _defaults = {
             "prey_death": 0.05,
@@ -374,13 +541,19 @@ class PP(CA):
     # Remove PP-specific evolve wrapper; use CA.evolve with optional species
 
     def validate(self) -> None:
-        """Validate PP-specific invariants in addition to base CA checks.
+        """
+        Validate Predator-Prey specific invariants and spatial parameter arrays.
 
-        Checks:
-        - each global parameter is numeric and in [0,1]
-        - per-cell evolved parameter arrays (in `_evolve_info`) have non-NaN
-          positions matching the species grid and contain values within the
-          configured min/max range (or are NaN).
+        Extends the base CA validation to ensure that numerical parameters are
+        within the [0, 1] probability range and that evolved parameter maps
+        (e.g., prey_death) correctly align with the species locations.
+
+        Raises
+        ------
+        ValueError
+            If grid shapes, parameter ranges, or species masks are inconsistent.
+        TypeError
+            If parameters are non-numeric.
         """
         super().validate()
 
@@ -428,6 +601,14 @@ class PP(CA):
                     )
 
     def update_async(self) -> None:
+        """
+        Execute an asynchronous update using the optimized Numba kernel.
+
+        This method retrieves the evolved parameter maps and delegates the
+        stochastic transitions to the `PPKernel`. Asynchronous updates
+        typically handle cell-by-cell logic where changes can be
+        immediately visible to neighbors.
+        """
         # Get the evolved prey death map
         # Fallback to a full array of the global param if it doesn't exist yet
         p_death_arr = self.cell_params.get("prey_death")
@@ -455,8 +636,7 @@ class PP(CA):
         )
 
     def update(self) -> None:
-        """Dispatch to synchronous or asynchronous update mode."""
-        if self.synchronous:
-            self.update_sync()
-        else:
-            self.update_async()
+        """
+        Dispatch the simulation step based on the configured update mode.
+        """
+        self.update_async()

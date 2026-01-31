@@ -1,30 +1,55 @@
 #!/usr/bin/env python3
 """
-Numba-optimized kernels for predator-prey cellular automaton.
+Numba-Optimized Kernels
+=======================
 
-Added full cluster detection with labels 
+This module provides Numba-accelerated kernels for the predator-prey
+cellular automaton, including update kernels and spatial analysis functions.
 
-Key additions:
-- detect_clusters_fast(): Returns (labels, sizes_dict) like Hoshen-Kopelman
-- get_cluster_stats_fast(): Full statistics including largest_fraction
-- get_percolating_cluster_fast(): Percolation detection for phase transitions
+Classes
+-------
+PPKernel
+    Wrapper for predator-prey update kernels with pre-allocated buffers.
 
-Optimizations:
-1. Cell-list PCF: O(N) average instead of O(N²) brute force
-2. Pre-allocated work buffers for async kernel
-3. Consistent dtypes throughout
-4. cache=True for persistent JIT compilation
+Cluster Analysis
+----------------
+```python
+measure_cluster_sizes_fast # Fast cluster size measurement (sizes only).
+detect_clusters_fast # Full cluster detection with labels.
+get_cluster_stats_fast # Comprehensive cluster statistics.
+```
 
-Usage:
-    from numba_optimized import (
-        PPKernel,
-        compute_all_pcfs_fast,
-        measure_cluster_sizes_fast,      # Sizes only (fastest)
-        detect_clusters_fast,            # Labels + sizes dict
-        get_cluster_stats_fast,          # Full statistics
-        get_percolating_cluster_fast,    # Percolation detection
-        NUMBA_AVAILABLE
-    )
+Pair Correlation Functions
+--------------------------
+```python
+compute_pcf_periodic_fast # PCF for two position sets with periodic boundaries.
+compute_all_pcfs_fast #Compute prey-prey, pred-pred, and prey-pred PCFs.
+```
+
+Utilities
+---------
+```python
+set_numba_seed # Seed Numba's internal RNG.
+warmup_numba_kernels # Pre-compile kernels to avoid first-run latency.
+```
+
+Example
+-------
+```python
+from models.numba_optimized import (
+    PPKernel,
+    get_cluster_stats_fast,
+    compute_all_pcfs_fast,
+)
+
+# Cluster analysis
+stats = get_cluster_stats_fast(grid, species=1)
+print(f"Largest cluster: {stats['largest']}")
+
+# PCF computation
+pcfs = compute_all_pcfs_fast(grid, max_distance=20.0)
+prey_prey_dist, prey_prey_gr, _ = pcfs['prey_prey']
+```
 """
 
 import numpy as np
@@ -54,7 +79,29 @@ except ImportError:
 
 @njit(cache=True)
 def set_numba_seed(seed: int) -> None:
-    """Seed Numba's internal RNG from within a JIT context."""
+    """
+    Seed Numba's internal random number generator from within a JIT context.
+
+    This function ensures that Numba's independent random number generator
+    is synchronized with the provided seed, enabling reproducibility for
+    jit-compiled functions that use NumPy's random operations.
+
+    Parameters
+    ----------
+    seed : int
+        The integer value used to initialize the random number generator.
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    Because Numba maintains its own internal state for random number
+    generation, calling `np.random.seed()` in standard Python code will not
+    affect jit-compiled functions. This helper must be called to bridge
+    that gap.
+    """
     np.random.seed(seed)
 
 
@@ -79,7 +126,55 @@ def _pp_async_kernel_random(
     evolution_stopped: bool,
     occupied_buffer: np.ndarray,
 ) -> np.ndarray:
-    """Asynchronous predator-prey update kernel with random neighbor selection."""
+    """
+    Asynchronous predator-prey update kernel with random neighbor selection.
+
+    This Numba-accelerated kernel performs an asynchronous update of the
+    simulation grid. It identifies all occupied cells, shuffles them to
+    ensure unbiased processing, and applies stochastic rules for prey
+    mortality, prey reproduction (with optional parameter evolution),
+    predator mortality, and predation.
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D integer array representing the simulation grid (0: Empty, 1: Prey, 2: Predator).
+    prey_death_arr : np.ndarray
+        2D float array storing the individual prey death rates for evolution tracking.
+    p_birth_val : float
+        Base probability of prey reproduction into an adjacent empty cell.
+    p_death_val : float
+        Base probability of prey death (though individual rates in `prey_death_arr` are used).
+    pred_birth_val : float
+        Probability of a predator reproducing after consuming prey.
+    pred_death_val : float
+        Probability of a predator dying.
+    dr_arr : np.ndarray
+        Array of row offsets defining the neighborhood.
+    dc_arr : np.ndarray
+        Array of column offsets defining the neighborhood.
+    evolve_sd : float
+        Standard deviation of the mutation applied to the prey death rate during reproduction.
+    evolve_min : float
+        Lower bound for the evolved prey death rate.
+    evolve_max : float
+        Upper bound for the evolved prey death rate.
+    evolution_stopped : bool
+        If True, offspring inherit the parent's death rate without mutation.
+    occupied_buffer : np.ndarray
+        Pre-allocated 2D array used to store and shuffle coordinates of occupied cells.
+
+    Returns
+    -------
+    grid : np.ndarray
+        The updated simulation grid.
+
+    Notes
+    -----
+    The kernel uses periodic boundary conditions. The Fisher-Yates shuffle on
+    `occupied_buffer` ensures that the asynchronous updates do not introduce
+    directional bias.
+    """
     rows, cols = grid.shape
     n_shifts = len(dr_arr)
 
@@ -166,12 +261,50 @@ def _pp_async_kernel_directed(
     """
     Asynchronous predator-prey update kernel with directed behavior.
 
-    Directed behavior:
-    - Prey: Searches all neighbors for empty cells, randomly picks one to reproduce into
-    - Predator: Searches all neighbors for prey, randomly picks one to hunt
+    This kernel implements "intelligent" species behavior: prey actively search
+    for empty spaces to reproduce, and predators actively search for nearby
+    prey to hunt. A two-pass approach is used to stochastically select a
+    valid target from the neighborhood without heap allocation.
 
-    This makes both species more "intelligent" compared to random neighbor selection.
-    Uses efficient two-pass counting approach (Numba-compatible, no heap allocation).
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D integer array representing the simulation grid (0: Empty, 1: Prey, 2: Predator).
+    prey_death_arr : np.ndarray
+        2D float array storing individual prey mortality rates for evolution.
+    p_birth_val : float
+        Probability of prey reproduction attempt.
+    p_death_val : float
+        Base probability of prey mortality.
+    pred_birth_val : float
+        Probability of a predator reproduction attempt (hunting success).
+    pred_death_val : float
+        Probability of predator mortality.
+    dr_arr : np.ndarray
+        Row offsets defining the spatial neighborhood (e.g., Moore or von Neumann).
+    dc_arr : np.ndarray
+        Column offsets defining the spatial neighborhood.
+    evolve_sd : float
+        Standard deviation for mutations in prey death rates.
+    evolve_min : float
+        Minimum allowable value for evolved prey death rates.
+    evolve_max : float
+        Maximum allowable value for evolved prey death rates.
+    evolution_stopped : bool
+        If True, prevents mutation during prey reproduction.
+    occupied_buffer : np.ndarray
+        Pre-allocated array for storing and shuffling active cell coordinates.
+
+    Returns
+    -------
+    grid : np.ndarray
+        The updated simulation grid.
+
+    Notes
+    -----
+    The directed behavior significantly changes the system dynamics compared to
+    random neighbor selection, often leading to different critical thresholds
+    and spatial patterning. Periodic boundary conditions are applied.
     """
     rows, cols = grid.shape
     n_shifts = len(dr_arr)
@@ -288,7 +421,37 @@ def _pp_async_kernel_directed(
 
 
 class PPKernel:
-    """Wrapper for predator-prey kernel with pre-allocated buffers."""
+    """
+    Wrapper for predator-prey kernel with pre-allocated buffers.
+
+    This class manages the spatial configuration and memory buffers required
+    for the Numba-accelerated update kernels. By pre-allocating the
+    `occupied_buffer`, it avoids expensive memory allocations during the
+    simulation loop.
+
+    Parameters
+    ----------
+    rows : int
+        Number of rows in the simulation grid.
+    cols : int
+        Number of columns in the simulation grid.
+    neighborhood : {'moore', 'von_neumann'}, optional
+        The neighborhood type determining adjacent cells. 'moore' includes
+        diagonals (8 neighbors), 'von_neumann' does not (4 neighbors).
+        Default is 'moore'.
+    directed_hunting : bool, optional
+        If True, uses the directed behavior kernel where species search for
+        targets. If False, uses random neighbor selection. Default is False.
+
+    Attributes
+    ----------
+    rows : int
+        Grid row count.
+    cols : int
+        Grid column count.
+    directed_hunting : bool
+        Toggle for intelligent behavior logic.
+    """
 
     def __init__(
         self,
@@ -322,6 +485,37 @@ class PPKernel:
         evolve_max: float = 0.1,
         evolution_stopped: bool = True,
     ) -> np.ndarray:
+        """
+        Execute a single asynchronous update step using the configured kernel.
+
+        Parameters
+        ----------
+        grid : np.ndarray
+            The current 2D simulation grid.
+        prey_death_arr : np.ndarray
+            2D array of individual prey mortality rates.
+        prey_birth : float
+            Prey reproduction probability.
+        prey_death : float
+            Base prey mortality probability.
+        pred_birth : float
+            Predator reproduction (hunting success) probability.
+        pred_death : float
+            Predator mortality probability.
+        evolve_sd : float, optional
+            Mutation standard deviation (default 0.1).
+        evolve_min : float, optional
+            Minimum evolved death rate (default 0.001).
+        evolve_max : float, optional
+            Maximum evolved death rate (default 0.1).
+        evolution_stopped : bool, optional
+            Whether to disable mutation during this step (default True).
+
+        Returns
+        -------
+        np.ndarray
+            The updated grid after one full asynchronous pass.
+        """
         if self.directed_hunting:
             return _pp_async_kernel_directed(
                 grid,
@@ -372,7 +566,44 @@ def _flood_fill(
     cols: int,
     moore: bool,
 ) -> int:
-    """Stack-based flood fill with configurable neighborhood and periodic BC."""
+    """
+    Perform a stack-based flood fill to measure the size of a connected cluster.
+
+    This Numba-accelerated function identifies all contiguous cells of a
+    specific target value starting from a given coordinate. It supports
+    both Moore and von Neumann neighborhoods and implements periodic
+    boundary conditions (toroidal topology).
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D integer array representing the simulation environment.
+    visited : np.ndarray
+        2D boolean array tracked across calls to avoid re-processing cells.
+    start_r : int
+        Starting row index for the flood fill.
+    start_c : int
+        Starting column index for the flood fill.
+    target : int
+        The cell value (e.g., 1 for Prey, 2 for Predator) to include in the cluster.
+    rows : int
+        Total number of rows in the grid.
+    cols : int
+        Total number of columns in the grid.
+    moore : bool
+        If True, use a Moore neighborhood (8 neighbors). If False, use a
+        von Neumann neighborhood (4 neighbors).
+
+    Returns
+    -------
+    size : int
+        The total number of connected cells belonging to the cluster.
+
+    Notes
+    -----
+    The function uses a manual stack implementation to avoid recursion limit
+    issues and is optimized for use within JIT-compiled loops.
+    """
     max_stack = rows * cols
     stack_r = np.empty(max_stack, dtype=np.int32)
     stack_c = np.empty(max_stack, dtype=np.int32)
@@ -415,7 +646,36 @@ def _flood_fill(
 
 @njit(cache=True)
 def _measure_clusters(grid: np.ndarray, species: int, moore: bool = True) -> np.ndarray:
-    """Measure all cluster sizes for a species (sizes only)."""
+    """
+    Identify and measure the sizes of all connected clusters for a specific species.
+
+    This function scans the entire grid and initiates a flood-fill algorithm
+    whenever an unvisited cell of the target species is encountered. It
+    returns an array containing the size (cell count) of each identified cluster.
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D integer array representing the simulation environment.
+    species : int
+        The target species identifier (e.g., 1 for Prey, 2 for Predator).
+    moore : bool, optional
+        Determines the connectivity logic. If True, uses the Moore neighborhood
+        (8 neighbors); if False, uses the von Neumann neighborhood (4 neighbors).
+        Default is True.
+
+    Returns
+    -------
+    cluster_sizes : np.ndarray
+        A 1D array of integers where each element represents the size of
+        one connected cluster.
+
+    Notes
+    -----
+    This function is Numba-optimized and utilizes an internal `visited` mask
+    to ensure each cell is processed only once, maintaining $O(N)$
+    complexity relative to the number of cells.
+    """
     rows, cols = grid.shape
     visited = np.zeros((rows, cols), dtype=np.bool_)
 
@@ -502,65 +762,6 @@ def _detect_clusters_numba(
     return labels, sizes[:n_clusters]
 
 
-@njit(cache=True)
-def _check_percolation(
-    labels: np.ndarray,
-    sizes: np.ndarray,
-    direction: int,
-) -> Tuple[bool, int, int]:
-    """
-    Check for percolating clusters.
-
-    Args:
-        direction: 0=horizontal, 1=vertical, 2=both
-
-    Returns:
-        percolates, perc_label, perc_size
-    """
-    rows, cols = labels.shape
-    max_label = len(sizes)
-
-    touches_left = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_right = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_top = np.zeros(max_label + 1, dtype=np.bool_)
-    touches_bottom = np.zeros(max_label + 1, dtype=np.bool_)
-
-    for i in range(rows):
-        if labels[i, 0] > 0:
-            touches_left[labels[i, 0]] = True
-        if labels[i, cols - 1] > 0:
-            touches_right[labels[i, cols - 1]] = True
-
-    for j in range(cols):
-        if labels[0, j] > 0:
-            touches_top[labels[0, j]] = True
-        if labels[rows - 1, j] > 0:
-            touches_bottom[labels[rows - 1, j]] = True
-
-    best_label = 0
-    best_size = 0
-
-    for label in range(1, max_label + 1):
-        percolates_h = touches_left[label] and touches_right[label]
-        percolates_v = touches_top[label] and touches_bottom[label]
-
-        is_percolating = False
-        if direction == 0:
-            is_percolating = percolates_h
-        elif direction == 1:
-            is_percolating = percolates_v
-        else:
-            is_percolating = percolates_h or percolates_v
-
-        if is_percolating:
-            cluster_size = sizes[label - 1]
-            if cluster_size > best_size:
-                best_size = cluster_size
-                best_label = label
-
-    return best_label > 0, best_label, best_size
-
-
 # ============================================================================
 # PUBLIC API - CLUSTER DETECTION
 # ============================================================================
@@ -572,18 +773,39 @@ def measure_cluster_sizes_fast(
     neighborhood: str = "moore",
 ) -> np.ndarray:
     """
-    Measure cluster sizes only (fastest method).
+    Measure cluster sizes for a specific species using Numba-accelerated flood fill.
 
-    Use when you only need size statistics, not the label array.
-    ~25x faster than pure Python.
+    This function provides a high-performance interface for calculating cluster
+    size statistics without the overhead of generating a full label map. It is
+    optimized for large-scale simulation analysis where only distribution
+    metrics (e.g., mean size, max size) are required.
 
-    Args:
-        grid: 2D array of cell states
-        species: Target species value (1=prey, 2=predator)
-        neighborhood: 'moore' (8-connected) or 'neumann' (4-connected)
+    Parameters
+    ----------
+    grid : np.ndarray
+        A 2D array representing the simulation environment.
+    species : int
+        The target species identifier (e.g., 1 for Prey, 2 for Predator).
+    neighborhood : {'moore', 'neumann'}, optional
+        The connectivity rule. 'moore' uses 8-way connectivity (including diagonals);
+        'neumann' uses 4-way connectivity. Default is 'moore'.
 
-    Returns:
-        1D array of cluster sizes
+    Returns
+    -------
+    cluster_sizes : np.ndarray
+        A 1D array of integers, where each element is the cell count of an
+        identified cluster.
+
+    Notes
+    -----
+    The input grid is cast to `int32` to ensure compatibility with the
+    underlying JIT-compiled `_measure_clusters` kernel.
+
+    Examples
+    --------
+    >>> sizes = measure_cluster_sizes_fast(grid, species=1, neighborhood='moore')
+    >>> if sizes.size > 0:
+    ...     print(f"Largest cluster: {sizes.max()}")
     """
     grid_int = np.asarray(grid, dtype=np.int32)
     moore = neighborhood == "moore"
@@ -596,23 +818,41 @@ def detect_clusters_fast(
     neighborhood: str = "moore",
 ) -> Tuple[np.ndarray, Dict[int, int]]:
     """
-    Full cluster detection with labels (Numba-accelerated).
+    Perform full cluster detection with labels using Numba acceleration.
 
-    Returns both the label array and size dictionary for richer analysis.
+    This function returns a label array for spatial analysis and a dictionary
+    of cluster sizes. It is significantly faster than standard Python or
+    SciPy equivalents for large simulation grids.
 
-    Args:
-        grid: 2D array of cell states
-        species: Target species value (1=prey, 2=predator)
-        neighborhood: 'moore' (8-connected) or 'neumann' (4-connected)
+    Parameters
+    ----------
+    grid : np.ndarray
+        A 2D array representing the simulation environment.
+    species : int
+        The target species identifier (e.g., 1 for Prey, 2 for Predator).
+    neighborhood : {'moore', 'neumann'}, optional
+        The connectivity rule. 'moore' uses 8-way connectivity; 'neumann'
+        uses 4-way connectivity. Default is 'moore'.
 
-    Returns:
-        labels: 2D array where each cell has its cluster ID (0 = non-target)
-        sizes: Dict mapping cluster_id -> cluster_size
+    Returns
+    -------
+    labels : np.ndarray
+        A 2D int32 array where each cell contains its unique cluster ID.
+        Cells not belonging to the target species are 0.
+    sizes : dict
+        A dictionary mapping cluster IDs to their respective cell counts.
 
-    Example:
-        >>> labels, sizes = detect_clusters_fast(grid, species=1)
-        >>> largest_id = max(sizes, key=sizes.get)
-        >>> largest_size = sizes[largest_id]
+    Notes
+    -----
+    The underlying Numba kernel uses a stack-based flood fill to avoid
+    recursion limits and handles periodic boundary conditions.
+
+    Examples
+    --------
+    >>> labels, sizes = detect_clusters_fast(grid, species=1)
+    >>> if sizes:
+    ...     largest_id = max(sizes, key=sizes.get)
+    ...     print(f"Cluster {largest_id} size: {sizes[largest_id]}")
     """
     grid_int = np.asarray(grid, dtype=np.int32)
     moore = neighborhood == "moore"
@@ -627,23 +867,42 @@ def get_cluster_stats_fast(
     neighborhood: str = "moore",
 ) -> Dict:
     """
-    Compute comprehensive cluster statistics (Numba-accelerated).
+    Compute comprehensive cluster statistics for a species using Numba acceleration.
 
-    Args:
-        grid: 2D array of cell states
-        species: Target species value
-        neighborhood: 'moore' or 'neumann'
+    This function integrates cluster detection and labeling to provide a
+    full suite of spatial metrics. It calculates the cluster size distribution
+    and the largest cluster fraction, which often serves as an order
+    parameter in percolation theory and Phase 1-3 analyses.
 
-    Returns:
-        Dictionary with keys:
-        - 'n_clusters': Total number of clusters
-        - 'sizes': Array of sizes (sorted descending)
-        - 'largest': Size of largest cluster
-        - 'largest_fraction': S_max / N (order parameter for percolation)
-        - 'mean_size': Mean cluster size
-        - 'size_distribution': Dict[size -> count]
-        - 'labels': Cluster label array
-        - 'size_dict': Dict[label -> size]
+    Parameters
+    ----------
+    grid : np.ndarray
+        A 2D array representing the simulation environment.
+    species : int
+        The target species identifier (e.g., 1 for Prey, 2 for Predator).
+    neighborhood : {'moore', 'neumann'}, optional
+        The connectivity rule. 'moore' uses 8-way connectivity; 'neumann'
+        uses 4-way connectivity. Default is 'moore'.
+
+    Returns
+    -------
+    stats : dict
+        A dictionary containing:
+        - 'n_clusters': Total count of isolated clusters.
+        - 'sizes': Sorted array (descending) of all cluster sizes.
+        - 'largest': Size of the single largest cluster.
+        - 'largest_fraction': Size of the largest cluster divided by
+          the total population of the species.
+        - 'mean_size': Average size of all clusters.
+        - 'size_distribution': Frequency mapping of {size: count}.
+        - 'labels': 2D array of unique cluster IDs.
+        - 'size_dict': Mapping of {label_id: size}.
+
+    Examples
+    --------
+    >>> stats = get_cluster_stats_fast(grid, species=1)
+    >>> print(f"Found {stats['n_clusters']} prey clusters.")
+    >>> print(f"Order parameter: {stats['largest_fraction']:.3f}")
     """
     labels, size_dict = detect_clusters_fast(grid, species, neighborhood)
 
@@ -681,46 +940,6 @@ def get_cluster_stats_fast(
     }
 
 
-def get_percolating_cluster_fast(
-    grid: np.ndarray,
-    species: int,
-    neighborhood: str = "moore",
-    direction: str = "both",
-) -> Tuple[bool, int, int, np.ndarray]:
-    """
-    Detect percolating (spanning) clusters (Numba-accelerated).
-
-    A percolating cluster connects opposite edges of the grid,
-    indicating a phase transition in percolation theory.
-
-    Args:
-        grid: 2D array of cell states
-        species: Target species value
-        neighborhood: 'moore' or 'neumann'
-        direction: 'horizontal', 'vertical', or 'both'
-
-    Returns:
-        percolates: True if a spanning cluster exists
-        cluster_label: Label of the percolating cluster (0 if none)
-        cluster_size: Size of the percolating cluster (0 if none)
-        labels: Full cluster label array
-
-    Example:
-        >>> percolates, label, size, labels = get_percolating_cluster_fast(grid, 1)
-        >>> if percolates:
-        >>>     print(f"Prey percolates with {size} cells!")
-    """
-    grid_int = np.asarray(grid, dtype=np.int32)
-    moore = neighborhood == "moore"
-    labels, sizes_arr = _detect_clusters_numba(grid_int, np.int32(species), moore)
-
-    dir_map = {"horizontal": 0, "vertical": 1, "both": 2}
-    dir_int = dir_map.get(direction, 2)
-
-    percolates, perc_label, perc_size = _check_percolation(labels, sizes_arr, dir_int)
-    return percolates, int(perc_label), int(perc_size), labels
-
-
 # ============================================================================
 # PCF COMPUTATION (Cell-list accelerated)
 # ============================================================================
@@ -733,7 +952,48 @@ def _build_cell_list(
     L_row: float,
     L_col: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
-    """Build cell list for spatial hashing."""
+    """
+    Build a cell list for spatial hashing to accelerate neighbor lookups.
+
+    This Numba-optimized function partitions a set of coordinates into a
+    grid of cells. It uses a three-pass approach to calculate cell occupancy,
+    compute starting offsets for each cell in a flat index array, and finally
+    populate that array with position indices.
+
+    Parameters
+    ----------
+    positions : np.ndarray
+        An (N, 2) float array of coordinates within the simulation domain.
+    n_cells : int
+        The number of cells along one dimension of the square grid.
+    L_row : float
+        The total height (row extent) of the simulation domain.
+    L_col : float
+        The total width (column extent) of the simulation domain.
+
+    Returns
+    -------
+    indices : np.ndarray
+        A 1D array of original position indices, reordered so that indices
+        belonging to the same cell are contiguous.
+    offsets : np.ndarray
+        A 2D array where `offsets[r, c]` is the starting index in the
+        `indices` array for cell (r, c).
+    cell_counts : np.ndarray
+        A 2D array where `cell_counts[r, c]` is the number of points
+        contained in cell (r, c).
+    cell_size_r : float
+        The calculated height of an individual cell.
+    cell_size_c : float
+        The calculated width of an individual cell.
+
+    Notes
+    -----
+    This implementation assumes periodic boundary conditions via the
+    modulo operator during coordinate-to-cell mapping. It is designed to
+    eliminate heap allocations within the main simulation loop by using
+    Numba's efficient array handling.
+    """
     n_pos = len(positions)
     cell_size_r = L_row / n_cells
     cell_size_c = L_col / n_cells
@@ -772,7 +1032,39 @@ def _periodic_dist_sq(
     L_row: float,
     L_col: float,
 ) -> float:
-    """Squared periodic distance."""
+    """
+    Calculate the squared Euclidean distance between two points with periodic boundary conditions.
+
+    This Numba-optimized function accounts for toroidal topology by finding the
+    shortest path between coordinates across the grid edges. Using the squared
+    distance avoids the computational expense of a square root operation,
+    making it ideal for high-frequency spatial queries.
+
+    Parameters
+    ----------
+    r1 : float
+        Row coordinate of the first point.
+    c1 : float
+        Column coordinate of the first point.
+    r2 : float
+        Row coordinate of the second point.
+    c2 : float
+        Column coordinate of the second point.
+    L_row : float
+        Total height (row extent) of the periodic domain.
+    L_col : float
+        Total width (column extent) of the periodic domain.
+
+    Returns
+    -------
+    dist_sq : float
+        The squared shortest distance between the two points.
+
+    Notes
+    -----
+    The function applies the minimum image convention, ensuring that the
+    distance never exceeds half the domain length in any dimension.
+    """
     dr = abs(r1 - r2)
     dc = abs(c1 - c2)
     if dr > L_row * 0.5:
@@ -798,7 +1090,57 @@ def _pcf_cell_list(
     self_correlation: bool,
     n_cells: int,
 ) -> np.ndarray:
-    """Compute PCF histogram using cell lists."""
+    """
+    Compute a Pair Correlation Function (PCF) histogram using spatial cell lists.
+
+    This Numba-accelerated parallel kernel calculates distances between two sets
+    of points (pos_i and pos_j). It uses a cell list (spatial hashing) to
+    restrict distance calculations to neighboring cells within the maximum
+    specified distance, significantly improving performance from $O(N^2)$
+    to $O(N)$.
+
+    Parameters
+    ----------
+    pos_i : np.ndarray
+        (N, 2) float array of coordinates for the primary species.
+    pos_j : np.ndarray
+        (M, 2) float array of coordinates for the secondary species.
+    indices_j : np.ndarray
+        Flattened indices of pos_j sorted by cell, produced by `_build_cell_list`.
+    offsets_j : np.ndarray
+        2D array of starting offsets for each cell in `indices_j`.
+    counts_j : np.ndarray
+        2D array of particle counts within each cell for species J.
+    cell_size_r : float
+        Height of a single spatial cell.
+    cell_size_c : float
+        Width of a single spatial cell.
+    L_row : float
+        Total height of the periodic domain.
+    L_col : float
+        Total width of the periodic domain.
+    max_distance : float
+        Maximum radial distance (r) to consider for the correlation.
+    n_bins : int
+        Number of bins in the distance histogram.
+    self_correlation : bool
+        If True, assumes species I and J are the same and avoids double-counting
+        or self-interaction.
+    n_cells : int
+        Number of cells per dimension in the spatial hash grid.
+
+    Returns
+    -------
+    hist : np.ndarray
+        A 1D array of length `n_bins` containing the counts of pairs found
+        at each radial distance.
+
+    Notes
+    -----
+    The kernel uses `prange` for parallel execution across points in `pos_i`.
+    Local histograms are used per thread to prevent race conditions during
+    reduction. Periodic boundary conditions are handled via `_periodic_dist_sq`.
+    """
     n_i = len(pos_i)
     bin_width = max_distance / n_bins
     max_dist_sq = max_distance * max_distance
@@ -855,7 +1197,46 @@ def compute_pcf_periodic_fast(
     n_bins: int = 50,
     self_correlation: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray, int]:
-    """Cell-list accelerated PCF computation."""
+    """
+    Compute the Pair Correlation Function (PCF) using cell-list acceleration.
+
+    This high-level function coordinates the spatial hashing and histogram
+    calculation to determine the $g(r)$ function. It normalizes the resulting
+    histogram by the expected number of pairs in an ideal gas of the same
+    density, accounting for the toroidal area of each radial bin.
+
+    Parameters
+    ----------
+    positions_i : np.ndarray
+        (N, 2) array of coordinates for species I.
+    positions_j : np.ndarray
+        (M, 2) array of coordinates for species J.
+    grid_shape : tuple of int
+        The (rows, cols) dimensions of the simulation grid.
+    max_distance : float
+        The maximum radius to calculate correlations for.
+    n_bins : int, optional
+        Number of bins for the radial distribution (default 50).
+    self_correlation : bool, optional
+        Set to True if computing the correlation of a species with itself
+        to avoid self-counting (default False).
+
+    Returns
+    -------
+    bin_centers : np.ndarray
+        The central radial distance for each histogram bin.
+    pcf : np.ndarray
+        The normalized $g(r)$ values. A value of 1.0 indicates no spatial
+        correlation; > 1.0 indicates clustering; < 1.0 indicates repulsion.
+    total_pairs : int
+        The total count of pairs found within the `max_distance`.
+
+    Notes
+    -----
+    The function dynamically determines the optimal number of cells for the
+    spatial hash based on the `max_distance` and grid dimensions to maintain
+    linear time complexity.
+    """
     rows, cols = grid_shape
     L_row, L_col = float(rows), float(cols)
     area = L_row * L_col
@@ -915,7 +1296,39 @@ def compute_all_pcfs_fast(
     max_distance: Optional[float] = None,
     n_bins: int = 50,
 ) -> Dict[str, Tuple[np.ndarray, np.ndarray, int]]:
-    """Compute all three PCFs using cell-list acceleration."""
+    """
+    Compute all three species Pair Correlation Functions (PCFs) using cell-list acceleration.
+
+    This function calculates the spatial auto-correlations (Prey-Prey,
+    Predator-Predator) and the cross-correlation (Prey-Predator) for a given
+    simulation grid. It identifies particle positions and leverages
+    Numba-accelerated cell lists to handle the computations efficiently.
+
+    Parameters
+    ----------
+    grid : np.ndarray
+        2D integer array where 1 represents prey and 2 represents predators.
+    max_distance : float, optional
+        The maximum radial distance for the correlation. Defaults to 1/4
+        of the minimum grid dimension if not provided.
+    n_bins : int, optional
+        Number of distance bins for the histogram. Default is 50.
+
+    Returns
+    -------
+    results : dict
+        A dictionary with keys 'prey_prey', 'pred_pred', and 'prey_pred'.
+        Each value is a tuple containing:
+        - bin_centers (np.ndarray): Radial distances.
+        - pcf_values (np.ndarray): Normalized g(r) values.
+        - pair_count (int): Total number of pairs found.
+
+    Notes
+    -----
+    The PCF provides insight into the spatial organization of the system.
+    g(r) > 1 at short distances indicates aggregation (clustering),
+    while g(r) < 1 indicates exclusion or repulsion.
+    """
     rows, cols = grid.shape
     if max_distance is None:
         max_distance = min(rows, cols) / 4.0
@@ -964,7 +1377,32 @@ def compute_all_pcfs_fast(
 
 
 def warmup_numba_kernels(grid_size: int = 100, directed_hunting: bool = False):
-    """Pre-compile all Numba kernels."""
+    """
+    Pre-compile all Numba-accelerated kernels to avoid first-run latency.
+
+    This function executes a single step of the simulation and each analysis
+    routine on a dummy grid. Because Numba uses Just-In-Time (JIT) compilation,
+    the first call to a decorated function incurs a compilation overhead.
+    Running this warmup ensures that subsequent experimental runs are timed
+    accurately and perform at full speed.
+
+    Parameters
+    ----------
+    grid_size : int, optional
+        The side length of the dummy grid used for warmup (default 100).
+    directed_hunting : bool, optional
+        If True, also warms up the directed behavior update kernel (default False).
+
+    Returns
+    -------
+    None
+
+    Notes
+    -----
+    This function checks for `NUMBA_AVAILABLE` before execution. It warms up
+    the `PPKernel` (random and optionally directed), as well as the
+    spatial analysis functions (`compute_all_pcfs_fast`, `detect_clusters_fast`, etc.).
+    """
     if not NUMBA_AVAILABLE:
         return
 
@@ -991,11 +1429,39 @@ def warmup_numba_kernels(grid_size: int = 100, directed_hunting: bool = False):
     _ = measure_cluster_sizes_fast(grid, 1)
     _ = detect_clusters_fast(grid, 1)
     _ = get_cluster_stats_fast(grid, 1)
-    _ = get_percolating_cluster_fast(grid, 1)
 
 
 def benchmark_kernels(grid_size: int = 100, n_runs: int = 20):
-    """Benchmark random vs directed kernels."""
+    """
+    Benchmark the execution performance of random vs. directed update kernels.
+
+    This utility measures the average time per simulation step for both the
+    stochastic (random neighbor) and heuristic (directed hunting/reproduction)
+    update strategies. It accounts for the computational overhead introduced
+    by the "intelligent" search logic used in directed mode.
+
+    Parameters
+    ----------
+    grid_size : int, optional
+        The side length of the square simulation grid (default 100).
+    n_runs : int, optional
+        The number of iterations to perform for averaging performance (default 20).
+
+    Returns
+    -------
+    t_random : float
+        Average time per step for the random kernel in milliseconds.
+    t_directed : float
+        Average time per step for the directed kernel in milliseconds.
+
+    Notes
+    -----
+    The function ensures a fair comparison by:
+    1. Using a fixed seed for reproducible initial grid states.
+    2. Warming up Numba kernels before timing to exclude JIT compilation latency.
+    3. Copying the grid and death arrays for each iteration to maintain
+       consistent population densities throughout the benchmark.
+    """
     import time
 
     print("=" * 60)
@@ -1049,7 +1515,32 @@ def benchmark_kernels(grid_size: int = 100, n_runs: int = 20):
 
 
 def benchmark_cluster_detection(grid_size: int = 100, n_runs: int = 20):
-    """Benchmark cluster detection methods."""
+    """
+    Benchmark the performance of different cluster detection and analysis routines.
+
+    This function evaluates three levels of spatial analysis:
+    1. Size measurement only (fastest, no label map).
+    2. Full detection (returns label map and size dictionary).
+    3. Comprehensive statistics (calculates distributions, means, and order parameters).
+
+    Parameters
+    ----------
+    grid_size : int, optional
+        Side length of the square grid for benchmarking (default 100).
+    n_runs : int, optional
+        Number of iterations to average for performance results (default 20).
+
+    Returns
+    -------
+    stats : dict
+        The result dictionary from the final comprehensive statistics run.
+
+    Notes
+    -----
+    The benchmark uses a fixed prey density of 30% to ensure a representative
+    distribution of clusters. It pre-warms the Numba kernels to ensure that
+    the measurements reflect execution speed rather than compilation time.
+    """
     import time
 
     print("=" * 60)
@@ -1070,7 +1561,6 @@ def benchmark_cluster_detection(grid_size: int = 100, n_runs: int = 20):
     _ = measure_cluster_sizes_fast(grid, 1)
     _ = detect_clusters_fast(grid, 1)
     _ = get_cluster_stats_fast(grid, 1)
-    _ = get_percolating_cluster_fast(grid, 1)
 
     # Benchmark sizes only
     t0 = time.perf_counter()
@@ -1092,13 +1582,6 @@ def benchmark_cluster_detection(grid_size: int = 100, n_runs: int = 20):
         stats = get_cluster_stats_fast(grid, 1)
     t_stats = (time.perf_counter() - t0) / n_runs * 1000
     print(f"get_cluster_stats_fast:     {t_stats:.2f} ms")
-
-    # Benchmark percolation
-    t0 = time.perf_counter()
-    for _ in range(n_runs):
-        perc, label, size, _ = get_percolating_cluster_fast(grid, 1)
-    t_perc = (time.perf_counter() - t0) / n_runs * 1000
-    print(f"get_percolating_cluster_fast: {t_perc:.2f} ms  (percolates={perc})")
 
     print(
         f"\nOverhead for labels: {t_detect - t_sizes:.2f} ms (+{100*(t_detect/t_sizes - 1):.0f}%)"

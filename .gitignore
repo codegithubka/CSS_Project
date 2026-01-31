@@ -12,12 +12,4 @@ results/
 data/
 .pytest_cache/
 
-.DS_Store
-
-hpc_data/phase4_18735304
-
-hpc_data/phase6_18780164
-
-
-hpc_data/**/*.jsonl
-hpc_data/**/*.jsonl
+.DS_Store/

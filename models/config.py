@@ -1,196 +1,189 @@
 #!/usr/bin/env python3
 """
-Configuration for Predator-Prey Hydra Effect Experiments
+Experiment Configuration
+========================
 
-Single Config dataclass with pre-defined instances for each experimental phase.
+This module provides the configuration dataclass and pre-defined phase
+configurations for Predator-Prey Hydra Effect experiments.
 
-Usage:
-    from config import PHASE1_CONFIG, PHASE2_CONFIG, Config
-    
-    # Use pre-defined config
-    cfg = PHASE1_CONFIG
-    
-    # Or create custom config
-    cfg = Config(grid_size=150, n_replicates=20)
-    
-    # Or modify existing
-    cfg = Config(**{**asdict(PHASE1_CONFIG), 'n_replicates': 30})
-    
-    
-    
-NOTE: Saving snapshots of the grid can be implemented with the following logic:
+Classes
+-------
+Config
+    Central configuration dataclass with all experiment parameters.
 
-    final_grid: cluster analysis verfication for every n_stps.
-    
-    For Phase 3, save fro all grif sizes
-    
-    Add to config:
-        save_final_grid: bool = False
-        save_grid_timeseries: bool = False  # Very costly, use sparingly
-        grid_timeseries_subsample: int = N  # Save every N steps
-        snapshot_sample_rate: float = 0.0X  # Only X% of runs save snapshots
-        
-    For run_single_simulation():
-        # After cluster analysis
-        if cfg.save_final_grid:
-        # Only save for a sample of runs 
-        if np.random.random() < cfg.snapshot_sample_rate:
-            result["final_grid"] = model.grid.tolist()  # JSON-serializable
+Functions
+---------
+```python
+get_phase_config: Retrieve configuration for a specific experimental phase.
+````
 
-        # For grid timeseries (use very sparingly):
-        if cfg.save_grid_timeseries:
-            grid_snapshots = []
-            
-        # Inside measurement loop:
-        if cfg.save_grid_timeseries and step % cfg.grid_timeseries_subsample == 0:
-            grid_snapshots.append(model.grid.copy())
+Phase Configurations
+--------------------
+- ``PHASE1_CONFIG``: Parameter sweep to find critical point
+- ``PHASE2_CONFIG``: Self-organization (evolution toward criticality)
+- ``PHASE3_CONFIG``: Finite-size scaling at critical point
+- ``PHASE4_CONFIG``: Sensitivity analysis (4D parameter sweep)
+- ``PHASE5_CONFIG``: Directed hunting comparison
 
-        # After loop:
-        if cfg.save_grid_timeseries and grid_snapshots:
-            # Save separately to avoid bloating JSONL
-            snapshot_path = output_dir / f"snapshots_{seed}.npz"
-            np.savez_compressed(snapshot_path, grids=np.array(grid_snapshots))
-            result["snapshot_file"] = str(snapshot_path)
-        
-        
-    OR create separate snapshot runs using some sort of SNAPSHOT_CONFIG.
+Example
+-------
+```python
+from models.config import Config, get_phase_config
+
+# Use predefined phase config
+cfg = get_phase_config(1)
+
+# Create custom config
+cfg = Config(grid_size=200, n_replicates=10)
+
+# Generate parameter sweep values
+prey_deaths = cfg.get_prey_deaths()
+```
 """
-
-from dataclasses import dataclass, field, asdict
-from typing import Tuple, Optional
+from dataclasses import dataclass
+from typing import Tuple
 import numpy as np
 
 
 @dataclass
 class Config:
-    """Central configuration for all experiments."""
+    """
+    Central configuration for Predator-Prey Hydra Effect experiments.
+
+    Attributes
+    ----------
+    grid_size : int
+        Side length of the square simulation grid.
+    densities : Tuple[float, float]
+        Initial population fractions for (prey, predator).
+    grid_sizes : Tuple[int, ...]
+        Grid dimensions for Finite-Size Scaling (FSS) analysis (Phase 3).
+    prey_birth : float
+        Global birth rate for prey species.
+    prey_death : float
+        Global death rate for prey species.
+    predator_birth : float
+        Global birth rate for predator species.
+    predator_death : float
+        Global death rate for predator species.
+    critical_prey_birth : float
+        Critical birth rate identified from Phase 1.
+    critical_prey_death : float
+        Critical death rate identified from Phase 1.
+    prey_death_range : Tuple[float, float]
+        Bounds for prey death rate sweep.
+    n_prey_death : int
+        Number of points in prey death rate sweep.
+    n_replicates : int
+        Independent stochastic runs per parameter set.
+    warmup_steps : int
+        Iterations before data collection begins.
+    measurement_steps : int
+        Iterations for collecting statistics.
+    evolve_sd : float
+        Standard deviation for parameter mutation.
+    evolve_min : float
+        Lower bound for evolving parameters.
+    evolve_max : float
+        Upper bound for evolving parameters.
+    directed_hunting : bool
+        Toggle for targeted predator movement.
+    save_timeseries : bool
+        Toggle for recording population time series.
+    timeseries_subsample : int
+        Subsample rate for time series data.
+    collect_pcf : bool
+        Toggle for Pair Correlation Function analysis.
+    pcf_sample_rate : float
+        Fraction of runs that compute PCFs.
+    pcf_max_distance : float
+        Maximum radial distance for PCF.
+    pcf_n_bins : int
+        Number of bins in PCF histogram.
+    min_density_for_analysis : float
+        Population threshold for spatial analysis.
+    n_jobs : int
+        CPU cores for parallelization (-1 = all).
+    """
 
     # Grid settings
-    grid_size: int = 1000  # FIXME: Decide default configuration
-    densities: Tuple[float, float] = (
-        0.30,
-        0.15,
-    )  # (prey, predator)  #FIXME: Default densities
-
-    # For FSS experiments: multiple grid sizes
+    grid_size: int = 1000
+    densities: Tuple[float, float] = (0.30, 0.15)
     grid_sizes: Tuple[int, ...] = (50, 100, 250, 500, 1000, 2500)
 
-    # Default/fixed parameters
+    # Species parameters
     prey_birth: float = 0.2
     prey_death: float = 0.05
-    predator_birth: float = 0.8  # FIXME: Default predator death rate
-    predator_death: float = 0.05  # FIXME: Default predator death rate
+    predator_birth: float = 0.8
+    predator_death: float = 0.05
 
-    # Critical point (UPDATE AFTER PHASE 1)
+    # Critical point (from Phase 1)
     critical_prey_birth: float = 0.20
-    critical_prey_death: float = 0.947
+    critical_prey_death: float = 0.0968
 
-    # Prey parameter sweep (Phase 1)
+    # Parameter sweep settings
     prey_death_range: Tuple[float, float] = (0.0, 0.2)
-    n_prey_birth: int = 15  # FIXME: Decide number of grid points along prey axes
-    n_prey_death: int = 5
+    n_prey_death: int = 20
 
-    # Predator parameter sweep (Phase 4 sensitivity)
-    predator_birth_values: Tuple[float, ...] = (
-        0.15,
-        0.20,
-        0.25,
-        0.30,
-    )  # FIXME: Bogus values for now
-    predator_death_values: Tuple[float, ...] = (
-        0.05,
-        0.10,
-        0.15,
-        0.20,
-    )  # FIXME: Bogus values for now
+    # Replication
+    n_replicates: int = 15
 
-    # Perturbation offsets from critical point (Phase 5)
-    prey_death_offsets: Tuple[float, ...] = (
-        -0.02,
-        -0.01,
-        0.0,
-        0.01,
-        0.02,
-    )  # FIXME: Bogus values for now
+    # Simulation timing
+    warmup_steps: int = 300
+    measurement_steps: int = 500
 
-    # Number of replicates per parameter configuration
-    n_replicates: int = 15  # FIXME: Decide number of indep. runs per parameter config
-
-    # Simulation steps
-    warmup_steps: int = 300  # FIXME: Steps to run before measuring
-    measurement_steps: int = 500  # FIXME: Decide measurement steps
-
-    # Evo
-    with_evolution: bool = False
+    # Evolution settings
     evolve_sd: float = 0.10
     evolve_min: float = 0.0
     evolve_max: float = 0.10
 
-    # Sensitivity: mutation strength values to test
-    sensitivity_sd_values: Tuple[float, ...] = (
-        0.02,
-        0.05,
-        0.10,
-        0.15,
-        0.20,
-    )  # FIXME: Don't know if we use yet
-
-    # Update mode
-    synchronous: bool = False  # Always False for this model
+    # Model variant
     directed_hunting: bool = False
 
-    # For Phase 6: compare model variants
-    directed_hunting_values: Tuple[bool, ...] = (False, True)
-
-    # Temporal data collection (time series)
+    # Time series collection
     save_timeseries: bool = False
-    timeseries_subsample: int = 10  # FIXME: Save every how many steps
+    timeseries_subsample: int = 10
 
     # PCF settings
     collect_pcf: bool = True
-    pcf_sample_rate: float = 0.2  # Fraction of runs to compute PCF
+    pcf_sample_rate: float = 0.2
     pcf_max_distance: float = 20.0
     pcf_n_bins: int = 20
 
-    # Cluster analysis
-    min_density_for_analysis: float = (
-        0.002  # FIXME: Minimum prey density (fraction of grid) to analyze clusters/PCF
-    )
-
-    # Perturbation settings (Phase 5)
-    perturbation_magnitude: float = (
-        0.1  # FIXME: Fractional change to apply at perturbation time
-    )
+    # Analysis thresholds
+    min_density_for_analysis: float = 0.002
 
     # Parallelization
-    n_jobs: int = -1  # Use all available cores by default
-
-    # Helpers
-    def get_prey_births(self) -> np.ndarray:
-        """Generate prey birth rate sweep values."""
-        return np.linspace(
-            self.prey_birth_range[0], self.prey_birth_range[1], self.n_prey_birth
-        )
+    n_jobs: int = -1
 
     def get_prey_deaths(self) -> np.ndarray:
-        """Generate prey death rate sweep values."""
+        """Generate array of prey death rates for parameter sweep."""
         return np.linspace(
             self.prey_death_range[0], self.prey_death_range[1], self.n_prey_death
         )
 
-    def get_warmup_steps(
-        self, L: int
-    ) -> int:  # FIXME: This method will be updated depending on Sary's results.
-        """Scale warmup with grid size."""
+    def get_warmup_steps(self, L: int) -> int:
+        """Get warmup steps (can be extended for size-dependent scaling)."""
         return self.warmup_steps
 
     def get_measurement_steps(self, L: int) -> int:
-        """Scale measurement with grid size."""
+        """Get measurement steps (can be extended for size-dependent scaling)."""
         return self.measurement_steps
 
     def estimate_runtime(self, n_cores: int = 32) -> str:
-        """Estimate total runtime based on benchmark data."""
-        # Benchmark: ~1182 steps/sec for 100x100 grid
+        """
+        Estimate wall-clock time for the experiment.
+
+        Parameters
+        ----------
+        n_cores : int
+            Number of available CPU cores.
+
+        Returns
+        -------
+        str
+            Human-readable runtime estimate.
+        """
         ref_size = 100
         ref_steps_per_sec = 1182
 
@@ -200,13 +193,9 @@ class Config:
         total_steps = self.warmup_steps + self.measurement_steps
         base_time_s = total_steps / actual_steps_per_sec
 
-        # PCF overhead (~8ms for 100x100)
         pcf_time_s = (0.008 * size_scaling) if self.collect_pcf else 0
 
-        # Count simulations
-        n_sims = self.n_prey_birth * self.n_prey_death * self.n_replicates
-        if self.with_evolution:
-            n_sims *= 2  # Both evo and non-evo runs
+        n_sims = self.n_prey_death * self.n_replicates
 
         total_seconds = n_sims * (base_time_s + pcf_time_s * self.pcf_sample_rate)
         total_seconds /= n_cores
@@ -217,11 +206,9 @@ class Config:
         return f"{n_sims:,} sims, ~{hours:.1f}h on {n_cores} cores (~{core_hours:.0f} core-hours)"
 
 
-############################################################################################
-# Experimental Phase Configurations
-############################################################################################
-
-# FIXME: These configs are arbitraty and should be finalized before running experiments.
+# =============================================================================
+# Phase Configurations
+# =============================================================================
 
 PHASE1_CONFIG = Config(
     grid_size=1000,
@@ -234,79 +221,53 @@ PHASE1_CONFIG = Config(
     warmup_steps=1000,
     measurement_steps=1000,
     collect_pcf=False,
-    pcf_sample_rate=0.2,
     save_timeseries=False,
     directed_hunting=False,
 )
 
-# Phase 2: Self-organization (evolution toward criticality)
 PHASE2_CONFIG = Config(
     grid_size=1000,
-    n_prey_birth=1,  # Fixed at cfg.prey_birth (0.2)
+    n_prey_death=10,
     n_replicates=10,
-    warmup_steps=1000,  # Shorter warmup (evolution starts immediately)
-    measurement_steps=10000,  # Longer measurement to see convergence
-    # Evolution settings
-    with_evolution=True,
-    evolve_sd=0.01,  # Smaller mutation rate for smoother convergence
+    warmup_steps=1000,
+    measurement_steps=10000,
+    evolve_sd=0.01,
     evolve_min=0.0,
-    evolve_max=0.20,  # Allow full range
+    evolve_max=0.20,
     collect_pcf=False,
-    save_timeseries=False,  # Track evolution trajectory
+    save_timeseries=False,
 )
 
-# Phase 3: Finite-size scaling at critical point
 PHASE3_CONFIG = Config(
     grid_sizes=(50, 100, 250, 500, 1000, 2500),
     n_replicates=20,
     warmup_steps=1000,
     measurement_steps=1000,
-    critical_prey_birth=0.20,  # Add explicitly
-    critical_prey_death=0.947,  # Add explicitly - verify from Phase 1!
+    critical_prey_birth=0.20,
+    critical_prey_death=0.0968,
     collect_pcf=True,
     pcf_sample_rate=1.0,
     save_timeseries=False,
-    with_evolution=False,
     directed_hunting=False,
 )
 
-# Phase 4: Sensitivity analysis
 PHASE4_CONFIG = Config(
-    grid_size=250,  # As requested
-    n_replicates=10,  # As requested
-    warmup_steps=500,  # As requested
-    measurement_steps=500,  # As requested
-    with_evolution=False,
-    collect_pcf=False,
-    save_timeseries=False,
-    timeseries_subsample=10,
-    directed_hunting=False,
-)
-
-
-# Phase 5: Perturbation analysis (critical slowing down)
-PHASE5_CONFIG = Config(
-    grid_size=100,
-    prey_death_offsets=(-0.02, -0.01, 0.0, 0.01, 0.02),  # FIXME: Is this what we vary?
-    n_replicates=20,
-    warmup_steps=500,
-    measurement_steps=2000,
-    perturbation_magnitude=0.1,
-    collect_pcf=False,
-    save_timeseries=True,
-    timeseries_subsample=1,  # Full resolution for autocorrelation
-)
-
-# Phase 6: Model extensions (directed reproduction); same config as phase 4 but with directed reproduction
-PHASE6_CONFIG = Config(
     grid_size=250,
     n_replicates=10,
     warmup_steps=500,
     measurement_steps=500,
-    with_evolution=False,
     collect_pcf=False,
     save_timeseries=False,
-    timeseries_subsample=10,
+    directed_hunting=False,
+)
+
+PHASE5_CONFIG = Config(
+    grid_size=250,
+    n_replicates=10,
+    warmup_steps=500,
+    measurement_steps=500,
+    collect_pcf=False,
+    save_timeseries=False,
     directed_hunting=True,
 )
 
@@ -316,12 +277,28 @@ PHASE_CONFIGS = {
     3: PHASE3_CONFIG,
     4: PHASE4_CONFIG,
     5: PHASE5_CONFIG,
-    6: PHASE6_CONFIG,
 }
 
 
 def get_phase_config(phase: int) -> Config:
-    """Get config for a specific phase."""
+    """
+    Retrieve configuration for a specific experimental phase.
+
+    Parameters
+    ----------
+    phase : int
+        Phase number (1-5).
+
+    Returns
+    -------
+    Config
+        Configuration instance for the requested phase.
+
+    Raises
+    ------
+    ValueError
+        If phase number is invalid.
+    """
     if phase not in PHASE_CONFIGS:
         raise ValueError(
             f"Unknown phase {phase}. Valid phases: {list(PHASE_CONFIGS.keys())}"
