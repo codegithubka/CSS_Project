@@ -1,4 +1,4 @@
-## Predator-Prey Cellular Automaton: Model Documentation
+## Predator-Prey Cellular Automaton
 
 ### Overview
 
@@ -6,6 +6,26 @@ This project impelments a spatial predator-prey cellular automaton (CA) to inves
 
 The codebase uses Numba JIT compilation for computationally intensive kernels and is tuned for high performance computing environments. It supporrs parameter sweeps, finite size scaling analysis, and self-organized criticality exploration.
 
+---
+
+### Project Structure
+
+The repository is organized to separate model logic, high-performance execution scripts, and data analysis:
+
+```text
+.
+├── models/               # Core simulation logic
+│   ├── CA.py             # Base Cellular Automaton class
+│   ├── config.py         # Phase-specific experiment configurations
+│   └── numba_optimized.py # JIT kernels and cluster detection
+├── scripts/              # HPC execution scripts
+│   └── run_phase{1..5}.sh # Bash scripts for Slurm/SGE jobs
+├── notebooks/            # Data analysis and visualization
+│   └── plots.ipynb       # Results plotting and Hydra effect analysis
+├── tests/                # Pytest suite for model validation
+├── data/                 # Local storage for simulation outputs (JSONL)
+└── requirements.txt      # Project dependencies
+```
 ---
 
 ### Background
@@ -278,15 +298,83 @@ Metadata files (`phase{N}_metadata.json`) accompany each results file with confi
 
 ---
 
-### Dependencies
+### Testing
 
-**Required:**
+The project includes a pytest test suite covering all core modules.
+
+#### Test Modules
+
+| File | Coverage |
+|------|----------|
+| `tests/test_ca.py` | CA base class, PP model initialization, update mechanics, evolution, edge cases |
+| `tests/test_numba_optimized.py` | Cluster detection, PCF computation, PPKernel updates, performance |
+| `tests/test_experiments.py` | Utility functions, I/O operations, simulation runner, phase registration |
+| `tests/test_config.py` | Configuration defaults, phase configs, helper methods |
+
+#### Running Tests
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_ca.py -v
+
+# Run with coverage report
+pytest tests/ --cov=models --cov-report=html
+
+# Fast mode (stop on first failure)
+pytest tests/ -x --tb=short
+```
+
+### Documentation
+
+Full API documentation is available at: **[https://codegithubka.github.io/CSS_Project/](https://codegithubka.github.io/CSS_Project/)**
+
+
+#### Generating Docs Locally
+```bash
+# Generate HTML documentation
+pdoc --output-dir docs --docformat numpy --no-include-undocumented \
+    models.CA models.config models.numba_optimized experiments.py
+
+# View locally
+open docs/index.html
+```
+
+Documentation is auto-generated from NumPy-style docstrings using [pdoc](https://pdoc.dev/).
+
+
+### Getting Started
+
+#### 1. Dependencies
+
+Required:
 - Python 3.8+
 - NumPy
 - Numba (for JIT compilation)
 - tqdm (progress bars)
 - joblib (parallelization)
 
-**Optional:**
+Optional:
 - matplotlib (visualization)
 - scipy (additional analysis)
+
+#### 2. Installation
+Clone the repository and install the dependencies. It is recommended to use a virtual environment.
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+```
+
+#### 3. Running simulations
+
+The experiments are automated via bash-scripts in the ```scripts``` directory. These are configured for high-performance computing environments:
+
+```bash
+# Grant execution permissions
+chmod +x scripts/*.sh
+
+# Execute a specific phase (e.g., Phase 1)
+./scripts/run_phase1.sh
+```
