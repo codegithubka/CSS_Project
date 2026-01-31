@@ -1,4 +1,4 @@
-## Predator-Prey Cellular Automaton: Model Documentation
+## Predator-Prey Cellular Automaton
 
 ### Overview
 
@@ -25,7 +25,7 @@ The repository is organized to separate model logic, high-performance execution 
 ├── tests/                # Pytest suite for model validation
 ├── data/                 # Local storage for simulation outputs (JSONL)
 └── requirements.txt      # Project dependencies
-
+```
 ---
 
 ### Background
@@ -328,7 +328,7 @@ pytest tests/ -x --tb=short
 
 ### Documentation
 
-Full API documentation is available at: **[https://codegithubka.github.io/CSS_Project/](https://yourusername.github.io/CSS_Project/)**
+Full API documentation is available at: **[https://codegithubka.github.io/CSS_Project/](https://codegithubka.github.io/CSS_Project/)**
 
 
 #### Generating Docs Locally
@@ -346,20 +346,20 @@ Documentation is auto-generated from NumPy-style docstrings using [pdoc](https:/
 
 ### Getting Started
 
-#### Dependencies
+#### 1. Dependencies
 
-**Required:**
+Required:
 - Python 3.8+
 - NumPy
 - Numba (for JIT compilation)
 - tqdm (progress bars)
 - joblib (parallelization)
 
-**Optional:**
+Optional:
 - matplotlib (visualization)
 - scipy (additional analysis)
 
-#### Installation
+#### 2. Installation
 Clone the repository and install the dependencies. It is recommended to use a virtual environment.
 
 ```bash
@@ -367,7 +367,7 @@ Clone the repository and install the dependencies. It is recommended to use a vi
 pip install -r requirements.txt
 ```
 
-#### Running simulations
+#### 3. Running simulations
 
 The experiments are automated via bash-scripts in the ```scripts``` directory. These are configured for high-performance computing environments:
 
@@ -378,12 +378,3 @@ chmod +x scripts/*.sh
 # Execute a specific phase (e.g., Phase 1)
 ./scripts/run_phase1.sh
 ```
-
-#### Analysis and Visualization
-
-Once simulations complete, raw data is stored in the ```data/``` folder. Use the provided Jupyter notebook for analysis.
-
-```bash
-jupyter notebook notebooks/plots.ipynb
-```
-
