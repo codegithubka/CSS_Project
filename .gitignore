@@ -9,7 +9,6 @@ results/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 # Data files
-data/
 .pytest_cache/
 
 .DS_Store/
