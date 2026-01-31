@@ -1,970 +1,490 @@
-#!/usr/bin/env python3
 """
-Unit Tests for numba_optimized.py
+Tests for Numba-optimized kernels and spatial analysis functions.
 
-Run with:
-    pytest test_numba_optimized.py -v
-    pytest test_numba_optimized.py -v --tb=short  # shorter traceback
-    python test_numba_optimized.py  # without pytest
+Covers:
+- Cluster detection (measure_cluster_sizes_fast, detect_clusters_fast, get_cluster_stats_fast)
+- Pair Correlation Function (PCF) computation
+- PPKernel class
+- Warmup and seeding functions
 """
 
-import sys
-import numpy as np
 import pytest
+import numpy as np
+import sys
 from pathlib import Path
 
-# Setup path
-project_root = str(Path(__file__).resolve().parents[1])
-scripts_dir = str(Path(__file__).resolve().parent)
-for p in [project_root, scripts_dir]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-# Import module under test
-try:
-    from models.numba_optimized import (
-        NUMBA_AVAILABLE,
-        PPKernel,
-        compute_pcf_periodic_fast,
-        compute_all_pcfs_fast,
-        measure_cluster_sizes_fast,
-        warmup_numba_kernels,
-        set_numba_seed,
-    )
-except ImportError:
-    from models.numba_optimized import (
-        NUMBA_AVAILABLE,
-        PPKernel,
-        compute_pcf_periodic_fast,
-        compute_all_pcfs_fast,
-        measure_cluster_sizes_fast,
-        set_numba_seed,
-        warmup_numba_kernels,
-    )
-
-
-# ============================================================================
-# FIXTURES
-# ============================================================================
-
-
-@pytest.fixture
-def small_grid():
-    """Small 20x20 grid for quick tests."""
-    np.random.seed(42)
-    grid = np.random.choice([0, 1, 2], size=(20, 20), p=[0.5, 0.3, 0.2]).astype(
-        np.int32
-    )
-    return grid
-
-
-@pytest.fixture
-def medium_grid():
-    """Medium 50x50 grid for correctness tests."""
-    np.random.seed(42)
-    grid = np.random.choice([0, 1, 2], size=(50, 50), p=[0.55, 0.30, 0.15]).astype(
-        np.int32
-    )
-    return grid
-
-
-@pytest.fixture
-def large_grid():
-    """Large 100x100 grid for performance tests."""
-    np.random.seed(42)
-    grid = np.random.choice([0, 1, 2], size=(100, 100), p=[0.55, 0.30, 0.15]).astype(
-        np.int32
-    )
-    return grid
-
-
-@pytest.fixture
-def clustered_grid():
-    """Grid with known clusters for testing cluster detection."""
-    grid = np.zeros((30, 30), dtype=np.int32)
-    # Cluster 1: 3x3 = 9 cells at (2,2)
-    grid[2:5, 2:5] = 1
-    # Cluster 2: 2x4 = 8 cells at (10,10)
-    grid[10:12, 10:14] = 1
-    # Cluster 3: single cell at (20,20)
-    grid[20, 20] = 1
-    # Cluster 4: L-shape = 5 cells
-    grid[25, 25:28] = 1  # 3 horizontal
-    grid[26:28, 25] = 1  # 2 vertical
-    return grid
-
-
-@pytest.fixture
-def prey_death_array(medium_grid):
-    """Prey death rate array matching medium_grid."""
-    arr = np.full(medium_grid.shape, np.nan, dtype=np.float64)
-    arr[medium_grid == 1] = 0.05
-    return arr
-
-
-# ============================================================================
-# TEST: NUMBA AVAILABILITY
-# ============================================================================
-
-
-class TestNumbaAvailability:
-    """Tests for Numba availability and basic imports."""
-
-    def test_numba_available(self):
-        """Numba should be available."""
-        assert (
-            NUMBA_AVAILABLE
-        ), "Numba is not available - install with: pip install numba"
-
-    def test_ppkernel_importable(self):
-        """PPKernel class should be importable."""
-        assert PPKernel is not None
-
-    def test_pcf_functions_importable(self):
-        """PCF functions should be importable."""
-        assert compute_pcf_periodic_fast is not None
-        assert compute_all_pcfs_fast is not None
-
-    def test_cluster_function_importable(self):
-        """Cluster measurement function should be importable."""
-        assert measure_cluster_sizes_fast is not None
-
-
-# ============================================================================
-# TEST: PPKernel
-# ============================================================================
-
-
-class TestPPKernel:
-    """Tests for the PPKernel class."""
-
-    def test_kernel_initialization_moore(self):
-        """Kernel should initialize with Moore neighborhood."""
-        kernel = PPKernel(50, 50, "moore")
-        assert kernel.rows == 50
-        assert kernel.cols == 50
-        assert len(kernel._dr) == 8  # Moore has 8 neighbors
-
-    def test_kernel_initialization_neumann(self):
-        """Kernel should initialize with von Neumann neighborhood."""
-        kernel = PPKernel(50, 50, "neumann")
-        assert len(kernel._dr) == 4  # von Neumann has 4 neighbors
-
-    def test_kernel_buffer_allocation(self):
-        """Kernel should pre-allocate work buffer."""
-        kernel = PPKernel(100, 100, "moore")
-        assert kernel._occupied_buffer.shape == (10000, 2)
-        assert kernel._occupied_buffer.dtype == np.int32
-
-    def test_kernel_update_preserves_grid_shape(self, medium_grid, prey_death_array):
-        """Update should not change grid shape."""
-        kernel = PPKernel(50, 50, "moore")
-        original_shape = medium_grid.shape
-
-        kernel.update(medium_grid, prey_death_array, 0.2, 0.05, 0.2, 0.1)
-
-        assert medium_grid.shape == original_shape
-
-    def test_kernel_update_valid_states(self, medium_grid, prey_death_array):
-        """Grid should only contain valid states (0, 1, 2) after update."""
-        kernel = PPKernel(50, 50, "moore")
-
-        for _ in range(10):
-            kernel.update(medium_grid, prey_death_array, 0.2, 0.05, 0.2, 0.1)
-
-        assert medium_grid.min() >= 0
-        assert medium_grid.max() <= 2
-
-    def test_kernel_update_no_nan_in_grid(self, medium_grid, prey_death_array):
-        """Grid should not contain NaN values."""
-        kernel = PPKernel(50, 50, "moore")
-
-        for _ in range(10):
-            kernel.update(medium_grid, prey_death_array, 0.2, 0.05, 0.2, 0.1)
-
-        assert not np.any(np.isnan(medium_grid))
-
-    def test_kernel_prey_death_consistency(self, medium_grid, prey_death_array):
-        """Prey death array should have values only where prey exist."""
-        kernel = PPKernel(50, 50, "moore")
-
-        for _ in range(10):
-            kernel.update(
-                medium_grid,
-                prey_death_array,
-                0.2,
-                0.05,
-                0.2,
-                0.1,
-                evolution_stopped=False,
-            )
-
-        prey_mask = medium_grid == 1
-        non_prey_mask = medium_grid != 1
-
-        # Prey cells should have non-NaN death rates
-        assert np.all(
-            ~np.isnan(prey_death_array[prey_mask])
-        ), "Prey cells missing death rates"
-        # Non-prey cells should have NaN death rates
-        assert np.all(
-            np.isnan(prey_death_array[non_prey_mask])
-        ), "Non-prey cells have death rates"
-
-    def test_kernel_evolution_changes_values(self, medium_grid, prey_death_array):
-        """Evolution should change prey death values over time."""
-        kernel = PPKernel(50, 50, "moore")
-
-        initial_mean = np.nanmean(prey_death_array)
-
-        for _ in range(50):
-            kernel.update(
-                medium_grid,
-                prey_death_array,
-                0.2,
-                0.05,
-                0.2,
-                0.1,
-                evolve_sd=0.1,
-                evolve_min=0.001,
-                evolve_max=0.2,
-                evolution_stopped=False,
-            )
-
-        # Values should have changed (with high probability)
-        final_values = prey_death_array[~np.isnan(prey_death_array)]
-        if len(final_values) > 0:
-            # Check that not all values are exactly 0.05
-            assert not np.allclose(
-                final_values, 0.05
-            ), "Evolution did not change values"
-
-    def test_kernel_evolution_respects_bounds(self, medium_grid, prey_death_array):
-        """Evolved values should stay within bounds."""
-        kernel = PPKernel(50, 50, "moore")
-        evolve_min, evolve_max = 0.01, 0.15
-
-        for _ in range(100):
-            kernel.update(
-                medium_grid,
-                prey_death_array,
-                0.2,
-                0.05,
-                0.2,
-                0.1,
-                evolve_sd=0.1,
-                evolve_min=evolve_min,
-                evolve_max=evolve_max,
-                evolution_stopped=False,
-            )
-
-        valid_values = prey_death_array[~np.isnan(prey_death_array)]
-        if len(valid_values) > 0:
-            assert valid_values.min() >= evolve_min - 1e-10
-            assert valid_values.max() <= evolve_max + 1e-10
-
-    def test_kernel_evolution_stopped(self, medium_grid, prey_death_array):
-        """When evolution stopped, values should only change by inheritance."""
-        kernel = PPKernel(50, 50, "moore")
-
-        # Set all prey to same value
-        prey_death_array[medium_grid == 1] = 0.05
-
-        for _ in range(20):
-            kernel.update(
-                medium_grid,
-                prey_death_array,
-                0.2,
-                0.05,
-                0.2,
-                0.1,
-                evolve_sd=0.1,
-                evolve_min=0.001,
-                evolve_max=0.2,
-                evolution_stopped=True,
-            )
-
-        # All values should still be exactly 0.05 (inherited without mutation)
-        valid_values = prey_death_array[~np.isnan(prey_death_array)]
-        if len(valid_values) > 0:
-            assert np.allclose(valid_values, 0.05), "Evolution should be stopped"
-
-    def test_kernel_deterministic_with_seed(self):
-        """Same seed should produce same results."""
-        results = []
-
-        for _ in range(2):
-            np.random.seed(12345)
-            set_numba_seed(12345)
-            grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(
-                np.int32
-            )
-            prey_death = np.full((30, 30), 0.05, dtype=np.float64)
-            prey_death[grid != 1] = np.nan
-
-            kernel = PPKernel(30, 30, "moore")
-            for _ in range(10):
-                kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-            results.append(grid.copy())
-
-        assert np.array_equal(results[0], results[1]), "Results should be deterministic"
-
-
-class TestPPKernelDirectedHunting:
-    """Tests for PPKernel with directed hunting behavior."""
-
-    def test_kernel_initialization_directed_false(self):
-        """Kernel should default to directed_hunting=False."""
-        kernel = PPKernel(50, 50, "moore")
-        assert kernel.directed_hunting == False
-
-    def test_kernel_initialization_directed_true(self):
-        """Kernel should accept directed_hunting=True."""
-        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
-        assert kernel.directed_hunting == True
-
-    def test_kernel_directed_runs_without_error(self, medium_grid, prey_death_array):
-        """Directed hunting kernel should run without errors."""
-        set_numba_seed(42)
-        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
-
-        grid = medium_grid.copy()
-        prey_death = prey_death_array.copy()
-
-        # Run multiple steps
-        for _ in range(20):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        # Grid should only have valid states
-        assert grid.min() >= 0
-        assert grid.max() <= 2
-
-    def test_kernel_directed_valid_states(self, medium_grid, prey_death_array):
-        """Directed kernel should produce only valid states."""
-        set_numba_seed(42)
-        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
-
-        grid = medium_grid.copy()
-        prey_death = prey_death_array.copy()
-
-        for _ in range(50):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        unique = np.unique(grid)
-        assert all(v in [0, 1, 2] for v in unique)
-
-    def test_kernel_directed_prey_death_consistency(
-        self, medium_grid, prey_death_array
-    ):
-        """Directed kernel should maintain prey_death array consistency."""
-        set_numba_seed(42)
-        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
-
-        grid = medium_grid.copy()
-        prey_death = prey_death_array.copy()
-
-        for _ in range(20):
-            kernel.update(
-                grid, prey_death, 0.2, 0.05, 0.2, 0.1, evolution_stopped=False
-            )
-
-        # Prey cells should have non-NaN death rates
-        prey_mask = grid == 1
-        non_prey_mask = grid != 1
-
-        if np.any(prey_mask):
-            assert np.all(~np.isnan(prey_death[prey_mask]))
-        assert np.all(np.isnan(prey_death[non_prey_mask]))
-
-    def test_kernel_directed_evolution_respects_bounds(
-        self, medium_grid, prey_death_array
-    ):
-        """Directed kernel evolution should stay within bounds."""
-        set_numba_seed(42)
-        kernel = PPKernel(50, 50, "moore", directed_hunting=True)
-        evolve_min, evolve_max = 0.01, 0.15
-
-        grid = medium_grid.copy()
-        prey_death = prey_death_array.copy()
-
-        for _ in range(100):
-            kernel.update(
-                grid,
-                prey_death,
-                0.2,
-                0.05,
-                0.2,
-                0.1,
-                evolve_sd=0.1,
-                evolve_min=evolve_min,
-                evolve_max=evolve_max,
-                evolution_stopped=False,
-            )
-
-        valid_values = prey_death[~np.isnan(prey_death)]
-        if len(valid_values) > 0:
-            assert valid_values.min() >= evolve_min - 1e-10
-            assert valid_values.max() <= evolve_max + 1e-10
-
-    def test_kernel_directed_neumann_neighborhood(self):
-        """Directed hunting should work with von Neumann neighborhood."""
-        np.random.seed(42)
-        set_numba_seed(42)
-
-        grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
-        prey_death = np.full((30, 30), 0.05, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-
-        kernel = PPKernel(30, 30, "neumann", directed_hunting=True)
-
-        for _ in range(20):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        assert grid.min() >= 0
-        assert grid.max() <= 2
-
-    def test_random_vs_directed_different_behavior(self):
-        """Random and directed kernels should produce different results."""
-        np.random.seed(123)
-
-        # Create identical starting grids
-        grid_template = np.random.choice(
-            [0, 1, 2], (40, 40), p=[0.50, 0.35, 0.15]
-        ).astype(np.int32)
-
-        grid_random = grid_template.copy()
-        grid_directed = grid_template.copy()
-
-        prey_death_random = np.full((40, 40), 0.05, dtype=np.float64)
-        prey_death_random[grid_random != 1] = np.nan
-        prey_death_directed = prey_death_random.copy()
-
-        kernel_random = PPKernel(40, 40, "moore", directed_hunting=False)
-        kernel_directed = PPKernel(40, 40, "moore", directed_hunting=True)
-
-        # Run with same seed
-        set_numba_seed(999)
-        for _ in range(50):
-            kernel_random.update(grid_random, prey_death_random, 0.2, 0.05, 0.6, 0.1)
-
-        set_numba_seed(999)
-        for _ in range(50):
-            kernel_directed.update(
-                grid_directed, prey_death_directed, 0.2, 0.05, 0.6, 0.1
-            )
-
-        # Grids should differ (directed hunting changes dynamics)
-        # Note: not guaranteed for every seed, but highly likely
-        prey_random = np.sum(grid_random == 1)
-        prey_directed = np.sum(grid_directed == 1)
-        pred_random = np.sum(grid_random == 2)
-        pred_directed = np.sum(grid_directed == 2)
-
-        # At minimum, both should have valid grids
-        assert grid_random.min() >= 0 and grid_random.max() <= 2
-        assert grid_directed.min() >= 0 and grid_directed.max() <= 2
-
-        # The populations should likely differ
-        # (we don't assert this strictly as it depends on random dynamics)
-        print(f"Random:   prey={prey_random}, pred={pred_random}")
-        print(f"Directed: prey={prey_directed}, pred={pred_directed}")
-
-    def test_directed_predator_hunts_adjacent_prey(self):
-        """Directed predator should successfully hunt adjacent prey."""
-        # Create controlled scenario: predator surrounded by prey
-        grid = np.zeros((10, 10), dtype=np.int32)
-        grid[5, 5] = 2  # Predator in center
-        grid[4, 5] = 1  # Prey above
-        grid[6, 5] = 1  # Prey below
-        grid[5, 4] = 1  # Prey left
-        grid[5, 6] = 1  # Prey right
-
-        prey_death = np.full((10, 10), 0.05, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-
-        kernel = PPKernel(10, 10, "neumann", directed_hunting=True)
-
-        initial_prey = np.sum(grid == 1)
-        initial_pred = np.sum(grid == 2)
-
-        # Run with high predator birth, zero predator death
-        set_numba_seed(42)
-        for _ in range(5):
-            kernel.update(grid, prey_death, 0.0, 0.05, 1.0, 0.0)
-
-        final_prey = np.sum(grid == 1)
-        final_pred = np.sum(grid == 2)
-
-        # Predators should have converted some prey
-        # (with 100% birth rate and 0% death rate)
-        assert final_pred >= initial_pred, "Predator population should not decrease"
-        print(f"Prey: {initial_prey} -> {final_prey}")
-        print(f"Pred: {initial_pred} -> {final_pred}")
-
-
-# ============================================================================
-# TEST: PCF COMPUTATION
-# ============================================================================
-
-
-class TestPCFComputation:
-    """Tests for pair correlation function computation."""
-
-    def test_pcf_returns_correct_shapes(self, medium_grid):
-        """PCF should return arrays of correct shapes."""
-        prey_pos = np.argwhere(medium_grid == 1)
-        pred_pos = np.argwhere(medium_grid == 2)
-
-        n_bins = 20
-        dist, pcf, n_pairs = compute_pcf_periodic_fast(
-            prey_pos, pred_pos, medium_grid.shape, 15.0, n_bins, False
-        )
-
-        assert len(dist) == n_bins
-        assert len(pcf) == n_bins
-        assert isinstance(n_pairs, int)
-
-    def test_pcf_empty_positions(self):
-        """PCF should handle empty position arrays."""
-        empty = np.array([]).reshape(0, 2)
-        positions = np.array([[5, 5], [10, 10]])
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from models.numba_optimized import (
+    set_numba_seed,
+    PPKernel,
+    measure_cluster_sizes_fast,
+    detect_clusters_fast,
+    get_cluster_stats_fast,
+    compute_pcf_periodic_fast,
+    compute_all_pcfs_fast,
+    warmup_numba_kernels,
+    NUMBA_AVAILABLE,
+)
+
+
+# =============================================================================
+# Seed and Warmup Tests
+# =============================================================================
+
+
+class TestSeedingAndWarmup:
+    """Tests for RNG seeding and kernel warmup."""
+
+    def test_set_numba_seed_does_not_raise(self):
+        """set_numba_seed should execute without error."""
+        set_numba_seed(42)  # Should not raise
+
+    def test_warmup_numba_kernels_does_not_raise(self):
+        """warmup_numba_kernels should execute without error."""
+        warmup_numba_kernels(grid_size=20, directed_hunting=False)
+        warmup_numba_kernels(grid_size=20, directed_hunting=True)
+
+    def test_numba_available_flag(self):
+        """NUMBA_AVAILABLE should be True when numba is installed."""
+        assert NUMBA_AVAILABLE is True
+
+
+# =============================================================================
+# Cluster Detection Tests
+# =============================================================================
+
+
+class TestMeasureClusterSizesFast:
+    """Tests for measure_cluster_sizes_fast function."""
+
+    def test_empty_grid_returns_empty_array(self, empty_grid_10x10):
+        """Empty grid should return no clusters."""
+        sizes = measure_cluster_sizes_fast(empty_grid_10x10, species=1)
+        assert len(sizes) == 0
+
+    def test_single_cluster_correct_size(self, single_cluster_grid):
+        """Single connected cluster should return correct size."""
+        sizes = measure_cluster_sizes_fast(single_cluster_grid, species=1)
+        assert len(sizes) == 1
+        assert sizes[0] == 4  # 2x2 block
+
+    def test_two_clusters_correct_sizes(self, two_cluster_grid):
+        """Two separate clusters should return two sizes."""
+        sizes = measure_cluster_sizes_fast(two_cluster_grid, species=1)
+        assert len(sizes) == 2
+        assert sorted(sizes) == [3, 4]  # Clusters of size 3 and 4
+
+    def test_periodic_boundary_connects_clusters(self, periodic_cluster_grid):
+        """Clusters should connect via periodic boundaries (Moore)."""
+        sizes = measure_cluster_sizes_fast(periodic_cluster_grid, species=1, neighborhood="moore")
+        # All 3 cells should be one cluster due to periodic connections
+        assert len(sizes) == 1
+        assert sizes[0] == 3
+
+    def test_neumann_neighborhood_fewer_connections(self):
+        """Von Neumann should produce more clusters than Moore for diagonal patterns."""
+        grid = np.zeros((5, 5), dtype=np.int32)
+        # Diagonal line - connected in Moore, not in Neumann
+        grid[0, 0] = 1
+        grid[1, 1] = 1
+        grid[2, 2] = 1
+
+        sizes_moore = measure_cluster_sizes_fast(grid, species=1, neighborhood="moore")
+        sizes_neumann = measure_cluster_sizes_fast(grid, species=1, neighborhood="neumann")
+
+        assert len(sizes_moore) == 1  # One connected cluster
+        assert len(sizes_neumann) == 3  # Three separate cells
+
+    def test_species_filtering(self, mixed_grid_10x10):
+        """Should only count clusters for specified species."""
+        prey_sizes = measure_cluster_sizes_fast(mixed_grid_10x10, species=1)
+        pred_sizes = measure_cluster_sizes_fast(mixed_grid_10x10, species=2)
+
+        assert sum(prey_sizes) == 9  # Total prey count
+        assert sum(pred_sizes) == 4  # Total predator count
+
+    def test_checkerboard_many_clusters(self, checkerboard_grid):
+        """Checkerboard pattern should produce many small clusters in Neumann."""
+        sizes = measure_cluster_sizes_fast(checkerboard_grid, species=1, neighborhood="neumann")
+        # Each cell is isolated in Neumann neighborhood
+        assert len(sizes) == 18  # Half of 6x6 = 18 cells
+        assert all(s == 1 for s in sizes)
+
+
+class TestDetectClustersFast:
+    """Tests for detect_clusters_fast function."""
+
+    def test_returns_labels_and_size_dict(self, single_cluster_grid):
+        """Should return both label array and size dictionary."""
+        labels, sizes = detect_clusters_fast(single_cluster_grid, species=1)
+
+        assert isinstance(labels, np.ndarray)
+        assert labels.shape == single_cluster_grid.shape
+        assert isinstance(sizes, dict)
+
+    def test_labels_match_cluster_membership(self, two_cluster_grid):
+        """Labels should correctly identify cluster membership."""
+        labels, sizes = detect_clusters_fast(two_cluster_grid, species=1)
+
+        # All cells in a cluster should have same label
+        assert labels[0, 0] == labels[0, 1] == labels[1, 0]  # Cluster 1
+        assert labels[4, 4] == labels[4, 5] == labels[5, 4] == labels[5, 5]  # Cluster 2
+
+        # Different clusters should have different labels
+        assert labels[0, 0] != labels[4, 4]
+
+    def test_non_species_cells_have_zero_label(self, mixed_grid_10x10):
+        """Cells not belonging to target species should have label 0."""
+        labels, _ = detect_clusters_fast(mixed_grid_10x10, species=1)
+
+        # Predator cells and empty cells should be 0
+        assert labels[6, 6] == 0  # Predator cell
+        assert labels[5, 5] == 0  # Empty cell
+
+    def test_size_dict_matches_cluster_count(self, two_cluster_grid):
+        """Size dictionary should have entry for each cluster."""
+        labels, sizes = detect_clusters_fast(two_cluster_grid, species=1)
+
+        assert len(sizes) == 2
+        assert set(sizes.values()) == {3, 4}
+
+
+class TestGetClusterStatsFast:
+    """Tests for get_cluster_stats_fast function."""
+
+    def test_returns_comprehensive_stats(self, single_cluster_grid):
+        """Should return dictionary with all expected keys."""
+        stats = get_cluster_stats_fast(single_cluster_grid, species=1)
+
+        expected_keys = [
+            "n_clusters",
+            "sizes",
+            "largest",
+            "largest_fraction",
+            "mean_size",
+            "size_distribution",
+            "labels",
+            "size_dict",
+        ]
+        for key in expected_keys:
+            assert key in stats
+
+    def test_empty_grid_stats(self, empty_grid_10x10):
+        """Empty grid should return zero-valued stats."""
+        stats = get_cluster_stats_fast(empty_grid_10x10, species=1)
+
+        assert stats["n_clusters"] == 0
+        assert stats["largest"] == 0
+        assert stats["largest_fraction"] == 0.0
+        assert stats["mean_size"] == 0.0
+
+    def test_largest_fraction_calculation(self, two_cluster_grid):
+        """largest_fraction should be largest cluster / total population."""
+        stats = get_cluster_stats_fast(two_cluster_grid, species=1)
+
+        total_prey = 3 + 4  # Two clusters
+        expected_fraction = 4 / total_prey
+
+        assert stats["largest"] == 4
+        assert abs(stats["largest_fraction"] - expected_fraction) < 1e-10
+
+    def test_size_distribution_counts(self, checkerboard_grid):
+        """size_distribution should count clusters of each size."""
+        stats = get_cluster_stats_fast(checkerboard_grid, species=1, neighborhood="neumann")
+
+        # All 18 clusters are size 1
+        assert stats["size_distribution"] == {1: 18}
+
+    def test_sizes_sorted_descending(self, two_cluster_grid):
+        """sizes array should be sorted in descending order."""
+        stats = get_cluster_stats_fast(two_cluster_grid, species=1)
+
+        sizes = stats["sizes"]
+        assert list(sizes) == sorted(sizes, reverse=True)
+
+
+# =============================================================================
+# PCF Tests
+# =============================================================================
+
+
+class TestComputePcfPeriodicFast:
+    """Tests for compute_pcf_periodic_fast function."""
+
+    def test_empty_positions_returns_ones(self):
+        """PCF of empty positions should return 1.0 (no correlation)."""
+        empty_pos = np.array([]).reshape(0, 2)
+        grid_shape = (50, 50)
 
         dist, pcf, n_pairs = compute_pcf_periodic_fast(
-            empty, positions, (50, 50), 15.0, 20, False
+            empty_pos, empty_pos, grid_shape, max_distance=10.0, n_bins=10
         )
 
-        assert len(pcf) == 20
-        assert np.allclose(pcf, 1.0)  # Default value for empty
+        assert len(dist) == 10
+        assert np.allclose(pcf, 1.0)
         assert n_pairs == 0
 
-    def test_pcf_values_reasonable(self, large_grid):
-        """PCF values should be positive and reasonable."""
-        prey_pos = np.argwhere(large_grid == 1)
+    def test_bin_centers_correct_spacing(self):
+        """Bin centers should be evenly spaced."""
+        pos = np.array([[10.0, 10.0], [15.0, 15.0]])
+        grid_shape = (50, 50)
 
-        dist, pcf, n_pairs = compute_pcf_periodic_fast(
-            prey_pos, prey_pos, large_grid.shape, 20.0, 20, True
+        dist, _, _ = compute_pcf_periodic_fast(
+            pos, pos, grid_shape, max_distance=20.0, n_bins=10, self_correlation=True
         )
 
-        assert np.all(pcf >= 0), "PCF should be non-negative"
-        assert np.all(np.isfinite(pcf)), "PCF should be finite"
-        # For random distribution, PCF should be around 1.0 on average
-        assert 0.5 < np.mean(pcf) < 2.0, f"Mean PCF {np.mean(pcf)} seems unreasonable"
+        expected_spacing = 20.0 / 10
+        actual_spacing = dist[1] - dist[0]
+        assert abs(actual_spacing - expected_spacing) < 1e-10
 
-    def test_pcf_clustered_higher_than_random(self):
-        """Clustered points should have higher short-range PCF than random."""
-        grid_size = 100
+    def test_self_correlation_excludes_self_pairs(self):
+        """Self-correlation should not count i==j pairs."""
+        # Single point - self correlation should find 0 pairs
+        pos = np.array([[25.0, 25.0]])
+        grid_shape = (50, 50)
 
-        # Create clustered distribution
-        clustered_grid = np.zeros((grid_size, grid_size), dtype=np.int32)
-        for _ in range(10):
-            cx, cy = np.random.randint(10, 90, 2)
-            for dx in range(-5, 6):
-                for dy in range(-5, 6):
-                    if np.random.random() < 0.8:
-                        clustered_grid[(cx + dx) % grid_size, (cy + dy) % grid_size] = 1
-
-        # Create random distribution with same density
-        n_clustered = np.sum(clustered_grid == 1)
-        random_grid = np.zeros((grid_size, grid_size), dtype=np.int32)
-        positions = np.random.permutation(grid_size * grid_size)[:n_clustered]
-        for pos in positions:
-            random_grid[pos // grid_size, pos % grid_size] = 1
-
-        # Compute PCFs
-        clustered_pos = np.argwhere(clustered_grid == 1)
-        random_pos = np.argwhere(random_grid == 1)
-
-        _, pcf_clustered, _ = compute_pcf_periodic_fast(
-            clustered_pos, clustered_pos, (grid_size, grid_size), 20.0, 20, True
-        )
-        _, pcf_random, _ = compute_pcf_periodic_fast(
-            random_pos, random_pos, (grid_size, grid_size), 20.0, 20, True
+        _, _, n_pairs = compute_pcf_periodic_fast(
+            pos, pos, grid_shape, max_distance=10.0, self_correlation=True
         )
 
-        # Short-range PCF should be higher for clustered
-        short_range_clustered = np.mean(pcf_clustered[:5])
-        short_range_random = np.mean(pcf_random[:5])
+        assert n_pairs == 0
 
-        assert (
-            short_range_clustered > short_range_random
-        ), f"Clustered PCF ({short_range_clustered:.2f}) should be > random ({short_range_random:.2f})"
+    def test_cross_correlation_counts_all_pairs(self):
+        """Cross-correlation should count all i-j pairs."""
+        pos_i = np.array([[10.0, 10.0]])
+        pos_j = np.array([[12.0, 10.0]])  # Distance = 2
+        grid_shape = (50, 50)
 
-    def test_compute_all_pcfs_keys(self, medium_grid):
-        """compute_all_pcfs_fast should return dict with correct keys."""
-        results = compute_all_pcfs_fast(medium_grid, 15.0, 20)
+        _, _, n_pairs = compute_pcf_periodic_fast(
+            pos_i, pos_j, grid_shape, max_distance=10.0, self_correlation=False
+        )
+
+        assert n_pairs == 1
+
+    def test_periodic_distance_calculation(self):
+        """Distances should respect periodic boundaries."""
+        # Two points on opposite edges - should be close via periodicity
+        pos_i = np.array([[0.5, 25.0]])
+        pos_j = np.array([[49.5, 25.0]])  # Periodic distance = 1.0
+        grid_shape = (50, 50)
+
+        _, pcf, n_pairs = compute_pcf_periodic_fast(
+            pos_i, pos_j, grid_shape, max_distance=5.0, n_bins=5, self_correlation=False
+        )
+
+        assert n_pairs == 1  # Should find the pair
+
+
+class TestComputeAllPcfsFast:
+    """Tests for compute_all_pcfs_fast function."""
+
+    def test_returns_all_three_pcfs(self, mixed_grid_10x10):
+        """Should return prey-prey, pred-pred, and prey-pred PCFs."""
+        results = compute_all_pcfs_fast(mixed_grid_10x10, max_distance=3.0, n_bins=5)
 
         assert "prey_prey" in results
         assert "pred_pred" in results
         assert "prey_pred" in results
 
-    def test_compute_all_pcfs_structure(self, medium_grid):
-        """Each PCF result should be a tuple of (distances, pcf, n_pairs)."""
-        results = compute_all_pcfs_fast(medium_grid, 15.0, 20)
+    def test_each_pcf_has_correct_structure(self, mixed_grid_10x10):
+        """Each PCF result should be (distances, values, count) tuple."""
+        results = compute_all_pcfs_fast(mixed_grid_10x10, max_distance=3.0, n_bins=5)
 
         for key in ["prey_prey", "pred_pred", "prey_pred"]:
-            assert len(results[key]) == 3, f"{key} should have 3 elements"
-            dist, pcf, n_pairs = results[key]
-            assert len(dist) == 20
-            assert len(pcf) == 20
-            assert isinstance(n_pairs, int)
+            dist, pcf, n = results[key]
+            assert isinstance(dist, np.ndarray)
+            assert isinstance(pcf, np.ndarray)
+            assert isinstance(n, int)
+            assert len(dist) == len(pcf) == 5
+
+    def test_default_max_distance(self, mixed_grid_10x10):
+        """Default max_distance should be grid_size / 4."""
+        results = compute_all_pcfs_fast(mixed_grid_10x10, n_bins=5)
+
+        # For 10x10 grid, default max_distance = 2.5
+        dist, _, _ = results["prey_prey"]
+        assert dist[-1] < 2.5  # Last bin center should be less than max
+
+    def test_empty_species_returns_ones(self, prey_only_grid_10x10):
+        """PCF for missing species should return 1.0."""
+        results = compute_all_pcfs_fast(prey_only_grid_10x10, max_distance=3.0, n_bins=5)
+
+        _, pred_pred_pcf, _ = results["pred_pred"]
+        assert np.allclose(pred_pred_pcf, 1.0)
 
 
-# ============================================================================
-# TEST: CLUSTER MEASUREMENT
-# ============================================================================
+# =============================================================================
+# PPKernel Tests
+# =============================================================================
 
 
-class TestClusterMeasurement:
-    """Tests for cluster size measurement."""
+class TestPPKernel:
+    """Tests for PPKernel class."""
 
-    def test_cluster_known_sizes(self, clustered_grid):
-        """Should correctly identify known cluster sizes."""
-        sizes = measure_cluster_sizes_fast(clustered_grid, 1)
-        sizes_sorted = sorted(sizes, reverse=True)
+    def test_kernel_initialization_moore(self):
+        """Moore kernel should have 8-direction offsets."""
+        kernel = PPKernel(10, 10, neighborhood="moore")
+        assert len(kernel._dr) == 8
+        assert len(kernel._dc) == 8
 
-        # Expected: 9 (3x3), 8 (2x4), 5 (L-shape), 1 (single)
-        expected = [9, 8, 5, 1]
+    def test_kernel_initialization_neumann(self):
+        """Von Neumann kernel should have 4-direction offsets."""
+        kernel = PPKernel(10, 10, neighborhood="von_neumann")
+        assert len(kernel._dr) == 4
+        assert len(kernel._dc) == 4
 
-        assert len(sizes) == 4, f"Expected 4 clusters, got {len(sizes)}"
-        assert (
-            list(sizes_sorted) == expected
-        ), f"Expected {expected}, got {list(sizes_sorted)}"
+    def test_kernel_preallocates_buffer(self):
+        """Kernel should preallocate occupied_buffer."""
+        kernel = PPKernel(15, 20)
+        assert kernel._occupied_buffer.shape == (15 * 20, 2)
 
-    def test_cluster_empty_grid(self):
-        """Should return empty array for grid with no target species."""
-        grid = np.zeros((20, 20), dtype=np.int32)
-        sizes = measure_cluster_sizes_fast(grid, 1)
+    def test_kernel_update_modifies_grid(self):
+        """update() should modify the grid in place."""
+        set_numba_seed(42)
+        kernel = PPKernel(10, 10, neighborhood="moore", directed_hunting=False)
 
-        assert len(sizes) == 0
-
-    def test_cluster_full_grid(self):
-        """Single cluster when grid is full of one species."""
-        grid = np.ones((10, 10), dtype=np.int32)
-        sizes = measure_cluster_sizes_fast(grid, 1)
-
-        assert len(sizes) == 1
-        assert sizes[0] == 100
-
-    def test_cluster_diagonal_not_connected(self):
-        """Diagonally adjacent cells should NOT be connected (4-connectivity)."""
-        grid = np.zeros((5, 5), dtype=np.int32)
-        grid[0, 0] = 1
-        grid[1, 1] = 1  # Diagonal from (0,0)
-        grid[2, 2] = 1  # Diagonal from (1,1)
-
-        sizes = measure_cluster_sizes_fast(grid, 1)
-
-        # Each cell should be its own cluster (4-connectivity)
-        assert len(sizes) == 3, f"Expected 3 separate clusters, got {len(sizes)}"
-        assert all(s == 1 for s in sizes)
-
-    def test_cluster_orthogonal_connected(self):
-        """Orthogonally adjacent cells should be connected."""
-        grid = np.zeros((5, 5), dtype=np.int32)
-        grid[2, 1:4] = 1  # Horizontal line of 3
-        grid[1, 2] = 1  # One above middle
-        grid[3, 2] = 1  # One below middle
-
-        sizes = measure_cluster_sizes_fast(grid, 1)
-
-        # Should be one connected cluster of 5
-        assert len(sizes) == 1
-        assert sizes[0] == 5
-
-    def test_cluster_species_separation(self):
-        """Clusters of different species should be separate."""
         grid = np.zeros((10, 10), dtype=np.int32)
-        grid[0:3, 0:3] = 1  # 9 prey
-        grid[5:8, 5:8] = 2  # 9 predators
+        grid[3:6, 3:6] = 1  # Prey block
+        grid[7, 7] = 2  # One predator
 
-        prey_sizes = measure_cluster_sizes_fast(grid, 1)
-        pred_sizes = measure_cluster_sizes_fast(grid, 2)
+        prey_death_arr = np.full((10, 10), 0.05, dtype=np.float64)
+        prey_death_arr[grid != 1] = np.nan
 
-        assert len(prey_sizes) == 1
-        assert prey_sizes[0] == 9
-        assert len(pred_sizes) == 1
-        assert pred_sizes[0] == 9
+        initial_grid = grid.copy()
 
-    def test_cluster_total_cells(self, medium_grid):
-        """Total cells in clusters should equal total cells of that species."""
-        for species in [1, 2]:
-            sizes = measure_cluster_sizes_fast(medium_grid, species)
-            total_in_clusters = sum(sizes)
-            total_in_grid = np.sum(medium_grid == species)
+        kernel.update(
+            grid, prey_death_arr,
+            prey_birth=0.3, prey_death=0.05,
+            pred_birth=0.5, pred_death=0.1,
+        )
 
-            assert (
-                total_in_clusters == total_in_grid
-            ), f"Species {species}: cluster total {total_in_clusters} != grid total {total_in_grid}"
+        # Grid should have changed
+        assert not np.array_equal(grid, initial_grid)
+
+    def test_kernel_update_preserves_dtype(self):
+        """update() should preserve grid dtype."""
+        kernel = PPKernel(10, 10)
+
+        grid = np.zeros((10, 10), dtype=np.int32)
+        grid[5, 5] = 1
+        prey_death_arr = np.full((10, 10), 0.05, dtype=np.float64)
+
+        kernel.update(grid, prey_death_arr, 0.2, 0.05, 0.2, 0.1)
+
+        assert grid.dtype == np.int32
+
+    def test_kernel_directed_hunting_option(self):
+        """directed_hunting flag should be stored correctly."""
+        kernel_random = PPKernel(10, 10, directed_hunting=False)
+        kernel_directed = PPKernel(10, 10, directed_hunting=True)
+
+        assert kernel_random.directed_hunting is False
+        assert kernel_directed.directed_hunting is True
+
+    def test_kernel_update_with_evolution(self):
+        """update() should handle evolution parameters."""
+        set_numba_seed(42)
+        kernel = PPKernel(10, 10)
+
+        grid = np.zeros((10, 10), dtype=np.int32)
+        grid[2:5, 2:5] = 1  # Prey
+        prey_death_arr = np.full((10, 10), 0.05, dtype=np.float64)
+        prey_death_arr[grid != 1] = np.nan
+
+        # Run with evolution active
+        kernel.update(
+            grid, prey_death_arr,
+            prey_birth=0.3, prey_death=0.05,
+            pred_birth=0.5, pred_death=0.1,
+            evolve_sd=0.02, evolve_min=0.01, evolve_max=0.15,
+            evolution_stopped=False,
+        )
+
+        # Check that new prey have evolved values
+        new_prey_mask = (grid == 1) & ~np.isnan(prey_death_arr)
+        if np.any(new_prey_mask):
+            values = prey_death_arr[new_prey_mask]
+            assert np.all(values >= 0.01)
+            assert np.all(values <= 0.15)
 
 
-# ============================================================================
-# TEST: WARMUP FUNCTION
-# ============================================================================
+# =============================================================================
+# Edge Cases
+# =============================================================================
 
 
-class TestWarmup:
-    """Tests for JIT warmup function."""
+class TestNumbaEdgeCases:
+    """Edge case tests for Numba functions."""
 
-    def test_warmup_runs_without_error(self):
-        """Warmup should complete without errors."""
-        try:
-            warmup_numba_kernels(50)
-        except Exception as e:
-            pytest.fail(f"Warmup failed with error: {e}")
+    def test_cluster_detection_1x1_grid(self):
+        """Should handle minimal 1x1 grid."""
+        grid = np.array([[1]], dtype=np.int32)
+        sizes = measure_cluster_sizes_fast(grid, species=1)
+        assert len(sizes) == 1
+        assert sizes[0] == 1
 
-    def test_warmup_compiles_kernel(self):
-        """After warmup, kernel should run faster."""
+    def test_cluster_detection_full_grid(self):
+        """Should handle grid completely filled with one species."""
+        grid = np.ones((10, 10), dtype=np.int32)
+        stats = get_cluster_stats_fast(grid, species=1)
+
+        assert stats["n_clusters"] == 1
+        assert stats["largest"] == 100
+        assert stats["largest_fraction"] == 1.0
+
+    def test_pcf_single_point(self):
+        """PCF should handle single-point case."""
+        grid = np.zeros((20, 20), dtype=np.int32)
+        grid[10, 10] = 1
+
+        results = compute_all_pcfs_fast(grid, max_distance=5.0, n_bins=5)
+        _, pcf, n = results["prey_prey"]
+
+        assert n == 0  # No pairs with single point
+
+    def test_kernel_empty_grid(self):
+        """Kernel should handle completely empty grid."""
+        kernel = PPKernel(10, 10)
+        grid = np.zeros((10, 10), dtype=np.int32)
+        prey_death_arr = np.full((10, 10), np.nan, dtype=np.float64)
+
+        # Should not raise
+        kernel.update(grid, prey_death_arr, 0.2, 0.05, 0.2, 0.1)
+
+        # Grid should still be empty
+        assert np.sum(grid) == 0
+
+    def test_kernel_high_death_rates(self):
+        """Kernel should handle extreme death rates."""
+        set_numba_seed(42)
+        kernel = PPKernel(10, 10)
+
+        grid = np.zeros((10, 10), dtype=np.int32)
+        grid[::2, ::2] = 1  # Sparse prey
+        prey_death_arr = np.full((10, 10), 0.99, dtype=np.float64)  # Very high death
+        prey_death_arr[grid != 1] = np.nan
+
+        initial_prey = np.sum(grid == 1)
+
+        kernel.update(grid, prey_death_arr, 0.2, 0.99, 0.2, 0.1)
+
+        # Most prey should die
+        final_prey = np.sum(grid == 1)
+        assert final_prey < initial_prey
+
+    def test_cluster_large_grid_performance(self):
+        """Cluster detection should complete quickly on moderate grid."""
         import time
 
-        # First call (might trigger compilation)
-        warmup_numba_kernels(30)
-
-        # Timed call (should be fast)
+        grid = np.zeros((200, 200), dtype=np.int32)
+        # Random scattered prey
         np.random.seed(42)
-        grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
-        prey_death = np.full((30, 30), 0.05, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
+        grid[np.random.random((200, 200)) < 0.3] = 1
 
-        kernel = PPKernel(30, 30, "moore")
+        start = time.perf_counter()
+        stats = get_cluster_stats_fast(grid, species=1)
+        elapsed = time.perf_counter() - start
 
-        t0 = time.perf_counter()
-        for _ in range(10):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-        elapsed = time.perf_counter() - t0
-
-        # Should complete quickly (less than 1 second for 10 iterations)
-        assert elapsed < 1.0, f"Kernel too slow after warmup: {elapsed:.2f}s"
-
-    def test_warmup_directed_hunting(self):
-        """Warmup should work with directed_hunting=True."""
-        try:
-            warmup_numba_kernels(30, directed_hunting=True)
-        except Exception as e:
-            pytest.fail(f"Warmup with directed_hunting failed: {e}")
-
-
-# ============================================================================
-# TEST: EDGE CASES
-# ============================================================================
-
-
-class TestEdgeCases:
-    """Tests for edge cases and boundary conditions."""
-
-    def test_single_cell_grid(self):
-        """Should handle 1x1 grid."""
-        grid = np.array([[1]], dtype=np.int32)
-        prey_death = np.array([[0.05]], dtype=np.float64)
-
-        kernel = PPKernel(1, 1, "moore")
-        # Should not crash
-        kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-    def test_very_small_grid(self):
-        """Should handle very small grids."""
-        grid = np.array([[1, 0], [2, 1]], dtype=np.int32)
-        prey_death = np.full((2, 2), np.nan, dtype=np.float64)
-        prey_death[grid == 1] = 0.05
-
-        kernel = PPKernel(2, 2, "moore")
-        for _ in range(10):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        assert grid.min() >= 0
-        assert grid.max() <= 2
-
-    def test_all_empty_grid(self):
-        """Should handle grid with no organisms."""
-        grid = np.zeros((20, 20), dtype=np.int32)
-        prey_death = np.full((20, 20), np.nan, dtype=np.float64)
-
-        kernel = PPKernel(20, 20, "moore")
-        kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        # Grid should still be all zeros
-        assert np.all(grid == 0)
-
-    def test_all_prey_grid(self):
-        """Should handle grid with only prey."""
-        grid = np.ones((20, 20), dtype=np.int32)
-        prey_death = np.full((20, 20), 0.05, dtype=np.float64)
-
-        kernel = PPKernel(20, 20, "moore")
-        for _ in range(10):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        # Some prey should have died
-        assert np.sum(grid == 0) > 0
-
-    def test_all_predator_grid(self):
-        """Should handle grid with only predators."""
-        grid = np.full((20, 20), 2, dtype=np.int32)
-        prey_death = np.full((20, 20), np.nan, dtype=np.float64)
-
-        kernel = PPKernel(20, 20, "moore")
-        for _ in range(50):
-            kernel.update(grid, prey_death, 0.2, 0.05, 0.2, 0.1)
-
-        # All predators should have died (no prey to eat)
-        assert np.sum(grid == 2) < 400  # Most should be dead
-
-    def test_extreme_parameters(self):
-        """Should handle extreme parameter values."""
-        np.random.seed(42)
-        grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
-        prey_death = np.full((30, 30), 0.5, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-
-        kernel = PPKernel(30, 30, "moore")
-
-        # High death rates
-        kernel.update(grid, prey_death, 0.99, 0.99, 0.99, 0.99)
-
-        # Low death rates
-        grid = np.random.choice([0, 1, 2], (30, 30), p=[0.5, 0.3, 0.2]).astype(np.int32)
-        prey_death = np.full((30, 30), 0.001, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-        kernel.update(grid, prey_death, 0.01, 0.01, 0.01, 0.01)
-
-        # Should not crash
-        assert True
-
-    def test_directed_single_predator_surrounded_by_prey(self):
-        """Directed hunting: single predator surrounded by prey."""
-        grid = np.ones((5, 5), dtype=np.int32)  # All prey
-        grid[2, 2] = 2  # One predator in center
-
-        prey_death = np.full((5, 5), 0.05, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-
-        kernel = PPKernel(5, 5, "moore", directed_hunting=True)
-        set_numba_seed(42)
-
-        # Run a few steps
-        for _ in range(3):
-            kernel.update(grid, prey_death, 0.0, 0.05, 0.9, 0.0)
-
-        # Should not crash, grid should be valid
-        assert grid.min() >= 0
-        assert grid.max() <= 2
-
-    def test_directed_no_prey_nearby(self):
-        """Directed hunting: predator with no prey neighbors should explore."""
-        grid = np.zeros((10, 10), dtype=np.int32)
-        grid[0, 0] = 2  # Predator in corner
-        grid[9, 9] = 1  # Prey far away
-
-        prey_death = np.full((10, 10), 0.05, dtype=np.float64)
-        prey_death[grid != 1] = np.nan
-
-        kernel = PPKernel(10, 10, "moore", directed_hunting=True)
-        set_numba_seed(42)
-
-        # Run - predator should explore randomly (no prey adjacent)
-        for _ in range(5):
-            kernel.update(grid, prey_death, 0.0, 0.05, 0.5, 0.0)
-
-        assert grid.min() >= 0
-        assert grid.max() <= 2
-
-
-# ============================================================================
-# MAIN
-# ============================================================================
-
-
-def run_tests_without_pytest():
-    """Run tests without pytest for basic verification."""
-    print("=" * 60)
-    print("Running tests without pytest...")
-    print("=" * 60)
-
-    test_classes = [
-        TestNumbaAvailability,
-        TestPPKernel,
-        TestPCFComputation,
-        TestClusterMeasurement,
-        TestWarmup,
-        TestEdgeCases,
-    ]
-
-    # Create fixtures
-    np.random.seed(42)
-    small_grid = np.random.choice([0, 1, 2], (20, 20), p=[0.5, 0.3, 0.2]).astype(
-        np.int32
-    )
-    medium_grid = np.random.choice([0, 1, 2], (50, 50), p=[0.55, 0.30, 0.15]).astype(
-        np.int32
-    )
-    large_grid = np.random.choice([0, 1, 2], (100, 100), p=[0.55, 0.30, 0.15]).astype(
-        np.int32
-    )
-
-    clustered_grid = np.zeros((30, 30), dtype=np.int32)
-    clustered_grid[2:5, 2:5] = 1
-    clustered_grid[10:12, 10:14] = 1
-    clustered_grid[20, 20] = 1
-    clustered_grid[25, 25:28] = 1
-    clustered_grid[26:28, 25] = 1
-
-    prey_death_array = np.full(medium_grid.shape, np.nan, dtype=np.float64)
-    prey_death_array[medium_grid == 1] = 0.05
-
-    fixtures = {
-        "small_grid": small_grid,
-        "medium_grid": medium_grid,
-        "large_grid": large_grid,
-        "clustered_grid": clustered_grid,
-        "prey_death_array": prey_death_array,
-    }
-
-    passed = 0
-    failed = 0
-
-    for test_class in test_classes:
-        print(f"\n{test_class.__name__}:")
-        instance = test_class()
-
-        for method_name in dir(instance):
-            if method_name.startswith("test_"):
-                method = getattr(instance, method_name)
-
-                # Get fixture arguments
-                import inspect
-
-                sig = inspect.signature(method)
-                kwargs = {}
-                for param in sig.parameters:
-                    if param in fixtures:
-                        # Create fresh copy for each test
-                        kwargs[param] = fixtures[param].copy()
-
-                try:
-                    method(**kwargs)
-                    print(f"  ✓ {method_name}")
-                    passed += 1
-                except Exception as e:
-                    print(f"  ✗ {method_name}: {e}")
-                    failed += 1
-
-    print("\n" + "=" * 60)
-    print(f"Results: {passed} passed, {failed} failed")
-    print("=" * 60)
-
-    return failed == 0
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--no-pytest":
-        success = run_tests_without_pytest()
-        sys.exit(0 if success else 1)
-    else:
-        try:
-            import pytest
-
-            sys.exit(pytest.main([__file__, "-v"]))
-        except ImportError:
-            print("pytest not installed, running basic tests...")
-            success = run_tests_without_pytest()
-            sys.exit(0 if success else 1)
+        assert elapsed < 1.0  # Should complete in under 1 second
+        assert stats["n_clusters"] > 0

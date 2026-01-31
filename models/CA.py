@@ -1,5 +1,34 @@
+#!/usr/bin/env python3
 """
-Cellular automaton base class.
+Cellular Automaton Framework
+============================
+
+This module provides the base cellular automaton class and the
+Predator-Prey (PP) implementation with Numba-accelerated kernels.
+
+Classes
+-------
+CA: Abstract base class for spatial cellular automata.
+
+PP: Predator-Prey model with configurable hunting behavior.
+
+Example
+-------
+```python
+from models.CA import PP
+
+# Basic usage
+model = PP(rows=100, cols=100, densities=(0.3, 0.15), seed=42)
+model.run(steps=1000)
+
+# With evolution enabled
+model = PP(rows=100, cols=100, seed=42)
+model.evolve("prey_death", sd=0.05, min_val=0.01, max_val=0.15)
+model.run(steps=500)
+
+# With directed hunting
+model = PP(rows=100, cols=100, directed_hunting=True, seed=42)
+```
 """
 
 from typing import Tuple, Dict, Optional
@@ -610,7 +639,4 @@ class PP(CA):
         """
         Dispatch the simulation step based on the configured update mode.
         """
-        if self.synchronous:
-            self.update_sync()
-        else:
-            self.update_async()
+        self.update_async()

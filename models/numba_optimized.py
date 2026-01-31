@@ -1,23 +1,55 @@
 #!/usr/bin/env python3
 """
-Numba-optimized kernels for predator-prey cellular automaton.
+Numba-Optimized Kernels
+=======================
 
-Optimizations:
-1. Cell-list PCF: O(N) average instead of O(N²) brute force
-2. Pre-allocated work buffers for async kernel
-3. Consistent dtypes throughout
-4. cache=True for persistent JIT compilation
+This module provides Numba-accelerated kernels for the predator-prey
+cellular automaton, including update kernels and spatial analysis functions.
 
-Usage:
-    from numba_optimized import (
-        PPKernel,
-        compute_all_pcfs_fast,
-        measure_cluster_sizes_fast,      # Sizes only (fastest)
-        detect_clusters_fast,            # Labels + sizes dict
-        get_cluster_stats_fast,          # Full statistics
-        get_percolating_cluster_fast,    # Percolation detection
-        NUMBA_AVAILABLE
-    )
+Classes
+-------
+PPKernel
+    Wrapper for predator-prey update kernels with pre-allocated buffers.
+
+Cluster Analysis
+----------------
+```python
+measure_cluster_sizes_fast # Fast cluster size measurement (sizes only).
+detect_clusters_fast # Full cluster detection with labels.
+get_cluster_stats_fast # Comprehensive cluster statistics.
+```
+
+Pair Correlation Functions
+--------------------------
+```python
+compute_pcf_periodic_fast # PCF for two position sets with periodic boundaries.
+compute_all_pcfs_fast #Compute prey-prey, pred-pred, and prey-pred PCFs.
+```
+
+Utilities
+---------
+```python
+set_numba_seed # Seed Numba's internal RNG.
+warmup_numba_kernels # Pre-compile kernels to avoid first-run latency.
+```
+
+Example
+-------
+```python
+from models.numba_optimized import (
+    PPKernel,
+    get_cluster_stats_fast,
+    compute_all_pcfs_fast,
+)
+
+# Cluster analysis
+stats = get_cluster_stats_fast(grid, species=1)
+print(f"Largest cluster: {stats['largest']}")
+
+# PCF computation
+pcfs = compute_all_pcfs_fast(grid, max_distance=20.0)
+prey_prey_dist, prey_prey_gr, _ = pcfs['prey_prey']
+```
 """
 
 import numpy as np

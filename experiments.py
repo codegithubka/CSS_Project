@@ -1,19 +1,66 @@
 #!/usr/bin/env python3
 """
-Predator-Prey Hydra Effect Experiments - HPC Version
+Predator-Prey Hydra Effect Experiments
+======================================
 
-Experimental phases (run sequentially):
-  Phase 1: Parameter sweep to find critical point (bifurcation + cluster analysis)
-  Phase 2: Self-organization analysis (evolution toward criticality)
-  Phase 3: Finite-size scaling at critical point
-  Phase 4: Sensitivity analysis across parameter regimes
-  Phase 5: Model extensions (directed hunting comparison)
+HPC-ready experiment runner for investigating the Hydra effect in
+predator-prey cellular automata.
 
-Usage:
-    python experiments.py --phase 1                    # Run phase 1
-    python experiments.py --phase 1 --dry-run          # Estimate runtime
-    python experiments.py --phase all                  # Run all phases
-    python experiments.py --phase 1 --output results/  # Custom output
+Experimental Phases
+-------------------
+- **Phase 1**: Parameter sweep to find critical point (bifurcation + cluster analysis)
+- **Phase 2**: Self-organization analysis (evolution toward criticality)
+- **Phase 3**: Finite-size scaling at critical point
+- **Phase 4**: Sensitivity analysis across parameter regimes
+- **Phase 5**: Model extensions (directed hunting comparison)
+
+Functions
+---------
+```python
+run_single_simulation # Execute one simulation run and collect metrics.
+run_phase1, run_phase2, run_phase3, run_phase4, run_phase5  # Phase-specific experiment runners.
+```
+
+Utilities
+---------
+```python
+generate_unique_seed # Deterministic seed generation from parameters.
+count_populations # Count species populations on grid.
+get_evolved_stats # Statistics for evolved parameters.
+average_pcfs # Average multiple PCF measurements.
+save_results_jsonl, load_results_jsonl, save_results_npz # I/O functions for experiment results.
+```
+
+Command Line Usage
+------------------
+```bash
+python experiments.py --phase 1                    # Run phase 1
+python experiments.py --phase 1 --dry-run          # Estimate runtime
+python experiments.py --phase all                  # Run all phases
+python experiments.py --phase 1 --output results/  # Custom output
+```
+
+Programmatic Usage
+------------------
+```python
+from experiments import run_single_simulation, run_phase1
+from models.config import PHASE1_CONFIG
+
+# Single simulation
+result = run_single_simulation(
+    prey_birth=0.2,
+    prey_death=0.05,
+    predator_birth=0.8,
+    predator_death=0.1,
+    grid_size=100,
+    seed=42,
+    cfg=PHASE1_CONFIG,
+)
+
+# Full phase (writes to output directory)
+import logging
+results = run_phase1(PHASE1_CONFIG, Path("results/"), logging.getLogger())
+```
 """
 
 import argparse
@@ -45,7 +92,6 @@ try:
     from models.numba_optimized import (
         compute_all_pcfs_fast,
         get_cluster_stats_fast,
-        get_percolating_cluster_fast,
         warmup_numba_kernels,
         set_numba_seed,
         NUMBA_AVAILABLE,
@@ -419,7 +465,6 @@ def run_single_simulation(
             "predator_birth": predator_birth,
         },
         seed=seed,
-        synchronous=cfg.synchronous,
         directed_hunting=cfg.directed_hunting,
     )
 
